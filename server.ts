@@ -27,6 +27,13 @@ app.use((req, res, next) => {
 })
 
 
+app.get("/health", async (req, res) => {
+  const dbState = (await import("./utils/db.js")).default
+
+  res.json({ status: "ok", uptime: process.uptime(), env: process.env.NODE_ENV || "development" })
+})
+
+
 connectDB()
   .then(() => console.log("MongoDB connected"))
   .catch((err) => {
