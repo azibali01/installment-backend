@@ -10,12 +10,30 @@ export function requireMongoURI() {
         console.error("MONGODB_URI environment variable is not set. Set it before running this script.")
         process.exit(1)
     }
-    return MONGODB_URI
+
+    const uri = MONGODB_URI.trim()
+    const hasValidScheme = uri.startsWith("mongodb://") || uri.startsWith("mongodb+srv://")
+    if (!hasValidScheme) {
+        const preview = uri.slice(0, 30)
+        console.error(
+            "MONGODB_URI has an invalid scheme. Expected a connection string starting with 'mongodb://' or 'mongodb+srv://'.\n" +
+            `Current value (first 30 chars): '${preview}'` +
+            "\nPlease set the MONGODB_URI env var in your hosting provider (do not commit it to source control)."
+        )
+        process.exit(1)
+    }
+
+    return uri
 }
 
 export async function connectDB() {
     const uri = requireMongoURI()
-    await mongoose.connect(uri)
+    try {
+        await mongoose.connect(uri)
+    } catch (err) {
+        console.error("MongoDB connection error:", err)
+        throw err
+    }
 }
 
 export default connectDB
