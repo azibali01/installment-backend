@@ -37,6 +37,14 @@ export function requireMongoURI() {
 
 export async function connectDB() {
     const uri = requireMongoURI()
+
+    try {
+        const masked = uri.replace(/(mongodb(\+srv)?:\/\/)([^:]+):([^@]+)@/, "$1$3:***@");
+        console.log("Using MONGODB_URI (masked):", masked);
+    } catch (e) {
+
+    }
+
     try {
         await mongoose.connect(uri)
     } catch (err) {
