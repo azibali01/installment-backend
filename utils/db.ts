@@ -11,7 +11,16 @@ export function requireMongoURI() {
         process.exit(1)
     }
 
-    const uri = MONGODB_URI.trim()
+
+    let uri = MONGODB_URI.trim()
+
+
+    if (uri.startsWith("MONGODB_URI=")) {
+        const stripped = uri.split("=").slice(1).join("=").trim()
+        console.warn("MONGODB_URI env var contained the key name; stripping the prefix and using the value portion.")
+        uri = stripped
+    }
+
     const hasValidScheme = uri.startsWith("mongodb://") || uri.startsWith("mongodb+srv://")
     if (!hasValidScheme) {
         const preview = uri.slice(0, 30)
