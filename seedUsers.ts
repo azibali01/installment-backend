@@ -28,6 +28,7 @@ async function seed() {
         console.error("Seeding error:", err)
         process.exit(1)
     }
+
 }
 
 seed()
