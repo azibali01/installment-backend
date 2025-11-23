@@ -5,7 +5,9 @@ dotenv.config();
 
 const uri = process.env.MONGODB_URI;
 if (!uri) {
-  console.error("MONGODB_URI is not set. Set it in backend/.env or export it in your shell.");
+  console.error(
+    "MONGODB_URI is not set. Set it in backend/.env or export it in your shell."
+  );
   process.exit(1);
 }
 
