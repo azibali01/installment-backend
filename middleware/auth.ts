@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express"
 import jwt from "jsonwebtoken"
+import { getJwtSecret } from "../utils/config.js"
 
 declare global {
   namespace Express {
@@ -17,7 +18,7 @@ export const authenticate = (req: Request, res: Response, next: NextFunction) =>
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret") as { id: string; role: string }
+    const decoded = jwt.verify(token, getJwtSecret()) as { id: string; role: string }
     req.user = decoded
     next()
   } catch (error) {

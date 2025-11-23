@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express"
 import jwt from "jsonwebtoken"
 import User from "../models/User.js"
+import { getJwtSecret } from "../utils/config.js"
 
 const router = express.Router()
 
@@ -41,7 +42,7 @@ router.post("/login", async (req: Request, res: Response) => {
       return res.status(401).json({ error: "Invalid credentials" })
     }
 
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || "secret", {
+    const token = jwt.sign({ id: user._id, role: user.role }, getJwtSecret(), {
       expiresIn: "7d",
     })
 
