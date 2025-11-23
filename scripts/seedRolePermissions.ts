@@ -1,13 +1,12 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import RolePermission from "../models/RolePermission.js";
+import connectDB from "../utils/db.js";
 
 dotenv.config();
 
-const MONGODB = process.env.MONGODB_URI || "mongodb://localhost:27017/installment_system";
-
 async function run() {
-    await mongoose.connect(MONGODB);
+    await connectDB();
     console.log("Connected to Mongo for seeding role permissions");
 
     const defaults = [
@@ -21,7 +20,6 @@ async function run() {
                 "manage_products",
                 "view_installments",
                 "manage_installments",
-                "approve_installments",
                 "approve_installments",
                 "view_payments",
                 "manage_payments",

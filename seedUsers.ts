@@ -1,16 +1,16 @@
 import dotenv from "dotenv"
-import mongoose from "mongoose"
+import connectDB from "./utils/db.js"
 import User from "./models/User.js"
 
 dotenv.config()
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/installment_system"
+
 
 const admin = { name: "Admin", email: "admin@shop.com", password: "admin123", role: "admin" }
 
 async function seed() {
     try {
-        await mongoose.connect(MONGODB_URI)
+        await connectDB()
         console.log("Connected to MongoDB for seeding")
 
         const existing = await User.findOne({ email: admin.email })
