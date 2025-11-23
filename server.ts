@@ -17,14 +17,37 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 5000
 
-app.use(cors())
-app.use(express.json())
 
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://installment-expense-management-cveb2ntqq.vercel.app"
+const allowedOrigins = [FRONTEND_URL, "http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
 
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`)
+
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl} - origin: ${req.headers.origin || "<none>"}`)
   next()
 })
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true)
+      if (allowedOrigins.includes(origin)) return callback(null, true)
+      console.log("Blocked CORS origin:", origin)
+      return callback(new Error("Not allowed by CORS"))
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+)
+
+
+app.options("*", (req, res) => {
+  console.log("Preflight (OPTIONS)", req.originalUrl, "from", req.headers.origin)
+  res.sendStatus(204)
+})
+
+app.use(express.json())
 
 
 app.get("/health", async (req, res) => {
