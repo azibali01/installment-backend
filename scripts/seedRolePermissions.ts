@@ -61,8 +61,15 @@ async function run() {
     ];
 
     for (const def of defaults) {
-        await RolePermission.findOneAndUpdate({ role: def.role }, { $set: { permissions: def.permissions } }, { upsert: true });
-        console.log(`Seeded permissions for role: ${def.role}`);
+
+        const force = String(process.env.FORCE_ROLE_SEED).toLowerCase() === "true"
+        if (force) {
+            await RolePermission.findOneAndUpdate({ role: def.role }, { $set: { permissions: def.permissions } }, { upsert: true })
+            console.log(`Seeded permissions for role (overwritten): ${def.role}`);
+        } else {
+            await RolePermission.findOneAndUpdate({ role: def.role }, { $setOnInsert: { permissions: def.permissions, role: def.role } }, { upsert: true })
+            console.log(`Seeded permissions for role (no-overwrite): ${def.role}`);
+        }
     }
 
     console.log("Seeding complete");
