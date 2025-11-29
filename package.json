@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nodemon --exec \"npx tsx\" server.ts",
     "seed:roles": "npx tsx ./scripts/seedRolePermissions.ts",
+    "seed:users": "npx tsx ./seedUsers.ts",
     "build": "tsc",
     "postinstall": "npm run build",
     "start": "node dist/server.js"
