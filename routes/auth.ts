@@ -80,7 +80,7 @@ router.post(
       res.cookie("refreshToken", refreshTokenValue, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
         path: "/api",
         expires: refreshExpires,
       })
@@ -124,7 +124,7 @@ router.post("/refresh", async (req: Request, res: Response) => {
     res.cookie("refreshToken", newRefreshValue, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       path: "/api",
       expires: newRefreshExpires,
     })
@@ -142,7 +142,7 @@ router.post("/logout", async (req: Request, res: Response) => {
     if (cookie) {
       await RefreshToken.deleteOne({ token: cookie })
     }
-    res.clearCookie("refreshToken", { path: "/api" })
+    res.clearCookie("refreshToken", { path: "/api", sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", secure: process.env.NODE_ENV === "production" })
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Logout failed" })

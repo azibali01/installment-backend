@@ -51,16 +51,16 @@ if (NODE_ENV !== "production") {
 
 
 app.use(helmet())
-
-
 const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false })
-app.use(globalLimiter)
 
 app.use((corsOptions && (corsOptions as any).origin) ? (cors as any)(corsOptions) : (req: Request, res: Response, next: NextFunction) => next())
 app.options("*", (req: Request, res: Response, next: NextFunction) => {
   const opts = createCorsOptions(combinedEnv || FRONTEND_URL)
     ; (cors as any)(opts)(req, res, next)
 })
+
+// Apply rate limiting after CORS so error responses include CORS headers
+app.use(globalLimiter)
 
 app.use(express.json())
 app.use(cookieParser())
