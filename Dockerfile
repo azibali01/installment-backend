@@ -1,38 +1,41 @@
 # ---------- STAGE 1: Build ----------
 FROM node:22-alpine AS builder
-
-# Set working directory
 WORKDIR /app
 
-# Install build tools for native modules (bcrypt, etc.)
-RUN apk add --no-cache python3 make g++ git
+# Install build tools for native modules
+RUN apk add --no-cache python3 make g++ git bash
 
-# Copy package files and install dependencies
+# Copy package files and npmrc
 COPY package*.json ./
 COPY .npmrc ./
-RUN npm install
 
-# Copy the source code and build
+# Install all dependencies (dev + prod) for build
+RUN npm ci
+
+# Copy all source code
 COPY . .
+
+# Build the project (if you have a build step)
 RUN npm run build
 
 # ---------- STAGE 2: Runtime ----------
 FROM node:22-alpine AS runtime
-
-# Set working directory
 WORKDIR /app
 
-# Set timezone to UTC
 ENV TZ=UTC
 ENV NODE_ENV=production
 
-# Copy only production-ready files from builder
+# Copy package files
 COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
 
-# Expose application port
+# Install only production dependencies
+RUN npm ci --omit=dev
+
+# Copy the built/dist folder if exists, otherwise copy source
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/server.js ./server.js
+
 EXPOSE 3000
 
-# Start the app (adjust if your entry point is different)
-CMD ["node", "dist/main.js"]
+# Start the server
+CMD ["node", "server.js"]
