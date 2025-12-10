@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit"
 
 import connectDB from "./utils/db.js"
 import { getFrontendUrl, getJwtSecret, NODE_ENV } from "./utils/config.js"
-import { createCorsOptions } from "./utils/cors.js"
+import { createCorsOptions, parseAllowedOrigins } from "./utils/cors.js"
 
 import authRoutes from "./routes/auth.js"
 import cookieParser from "cookie-parser"
@@ -38,6 +38,7 @@ const defaultLocal = ["http://localhost:3000", "http://localhost:5173", "http://
 const combinedEnv = [envList].filter(Boolean).concat(defaultLocal).join(',')
 
 const corsOptions = createCorsOptions(combinedEnv || FRONTEND_URL)
+const allowedOrigins = parseAllowedOrigins(combinedEnv || FRONTEND_URL)
 
 if (NODE_ENV !== "production") {
   console.log(`${new Date().toISOString()} - NODE_ENV=${NODE_ENV} - using FRONTEND_URL=${FRONTEND_URL} - FRONTEND_URLS=${envList} - combined=${combinedEnv}`)
@@ -50,8 +51,87 @@ if (NODE_ENV !== "production") {
 
 
 
+// Ensure CORS headers are added as early as possible so any middleware
+// (including rate limiters) that short-circuits can still return responses
+// with the appropriate CORS headers. This middleware echoes back the
+// requesting origin when it's allowed and sets credentials headers.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin as string | undefined
+  try {
+    if (!origin) return next()
+
+    // In development, if no explicit FRONTEND_URLS provided, echo any origin
+    if (process.env.NODE_ENV !== 'production' && (!process.env.FRONTEND_URL && !process.env.FRONTEND_URLS)) {
+      res.header("Access-Control-Allow-Origin", origin)
+      res.header("Access-Control-Allow-Credentials", "true")
+      res.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Requested-With"
+      )
+      res.header(
+        "Access-Control-Allow-Methods",
+        "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+      )
+      return next()
+    }
+
+    const ok = allowedOrigins.some((a) => {
+      if (typeof a === "string") return a === origin
+      return (a as RegExp).test(origin)
+    })
+    if (ok) {
+      res.header("Access-Control-Allow-Origin", origin)
+      res.header("Access-Control-Allow-Credentials", "true")
+      res.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Requested-With"
+      )
+      res.header(
+        "Access-Control-Allow-Methods",
+        "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+      )
+    }
+  } catch (err) {
+    // don't block requests if CORS check fails
+  }
+  return next()
+})
+
 app.use(helmet())
-const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false })
+function setCorsHeadersForReq(res: Response, origin?: string | undefined) {
+  if (!origin) return
+  res.header("Access-Control-Allow-Origin", origin)
+  res.header("Access-Control-Allow-Credentials", "true")
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Requested-With"
+  )
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+  )
+}
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    try {
+        const origin = req.headers.origin as string | undefined
+        // Always attempt to echo the Origin header when present so short-circuit
+        // responses (like 429) include the required CORS headers for the browser.
+        // We still rely on the main CORS middleware for strict origin checks in
+        // production, but returning the header here prevents the browser from
+        // blocking the response when the request is rate-limited.
+        if (origin) setCorsHeadersForReq(res, origin)
+    } catch (err) {
+      // ignore header set errors
+    }
+    res.status(429).json({ error: "Too many requests" })
+  }
+})
 
 app.use((corsOptions && (corsOptions as any).origin) ? (cors as any)(corsOptions) : (req: Request, res: Response, next: NextFunction) => next())
 app.options("*", (req: Request, res: Response, next: NextFunction) => {
@@ -103,7 +183,19 @@ connectDB()
 
 
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false })
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    try {
+        const origin = req.headers.origin as string | undefined
+        if (origin) setCorsHeadersForReq(res, origin)
+    } catch (err) {}
+    res.status(429).json({ error: "Too many requests" })
+  }
+})
 app.use("/api/auth", authLimiter, authRoutes)
 app.use("/api/users", userRoutes)
 app.use("/api/products", productRoutes)

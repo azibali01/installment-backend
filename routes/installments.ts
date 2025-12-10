@@ -62,8 +62,9 @@ router.post(
     body("markupPercent").optional().isFloat({ min: 0 }).withMessage("markupPercent must be >= 0"),
     body("downPayment").isFloat({ min: 0 }).withMessage("downPayment must be >= 0"),
     body("numberOfMonths").isInt({ gt: 0 }).withMessage("numberOfMonths must be > 0"),
-    body("bankCheque.bankName").notEmpty().withMessage("bank name is required"),
-    body("bankCheque.accountNumber").notEmpty().withMessage("account number is required"),
+    // bank fields are optional (frontend may send empty strings); treat falsy values as absent
+    body("bankCheque.bankName").optional({ checkFalsy: true }).notEmpty().withMessage("bank name is required when bankCheque is provided"),
+    body("bankCheque.accountNumber").optional({ checkFalsy: true }).notEmpty().withMessage("account number is required when bankCheque is provided"),
     body("startDate").optional().isISO8601().toDate().withMessage("startDate must be a valid date"),
     body("roundingPolicy").optional().isIn(["nearest", "up", "down"]).withMessage("Invalid roundingPolicy"),
     body("interestModel").optional().isIn(["amortized", "flat", "equal"]).withMessage("Invalid interestModel"),

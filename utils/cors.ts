@@ -24,6 +24,18 @@ export function parseAllowedOrigins(env?: string): Array<string | RegExp> {
 export function createCorsOptions(frontendEnv?: string): CorsOptions {
     const allowed = parseAllowedOrigins(frontendEnv)
 
+  
+    if (process.env.NODE_ENV !== 'production' && allowed.length === 0) {
+        return {
+            origin: true,
+            methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+            allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+            credentials: true,
+            preflightContinue: false,
+            optionsSuccessStatus: 204,
+        }
+    }
+
     return {
         origin(origin, callback) {
             try {
