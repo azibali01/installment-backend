@@ -1,38 +1,48 @@
-# ---------- STAGE 1: Builder ----------
-FROM node:22-alpine AS builder
-WORKDIR /app
+# ---------- STAGE 1: Build ----------
+    FROM node:22-alpine AS builder
 
-# Install build tools
-RUN apk add --no-cache python3 make g++ git bash
+    # Set working directory
+    WORKDIR /app
+    
+    # Install build tools for native modules (bcrypt, etc.)
+    RUN apk add --no-cache python3 make g++
 
-# Copy package files and npmrc
-COPY package*.json ./
-COPY .npmrc ./
-
-# Install all dependencies (dev + prod)
-RUN npm ci
-
-# Copy TypeScript config and source code
-COPY tsconfig*.json ./
-COPY src ./src
-
-# Build the project with verbose logging
-# This will print all TypeScript errors during Docker build
-RUN npm run build || { echo "TypeScript build failed"; exit 1; }
-
-# ---------- STAGE 2: Runtime ----------
-FROM node:22-alpine AS runtime
-WORKDIR /app
-ENV TZ=UTC
-ENV NODE_ENV=production
-#test
-# Copy production dependencies
-COPY --from=builder /app/package*.json ./
-RUN npm ci --omit=dev
-
-# Copy built files
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/server.js ./server.js
-#test 2
-EXPOSE 3000
-CMD ["node", "server.js"]
+    # Copy and install dependencies
+    COPY .npmrc ./
+    COPY package*.json ./
+    RUN npm install
+    
+    # Copy source code and build
+    COPY . .
+    RUN npm run build
+    
+    
+    # ---------- STAGE 2: Runtime ----------
+    FROM node:22-alpine
+    
+    # Set working directory
+    WORKDIR /app
+    
+    # Set timezone to UTC
+    ENV TZ=UTC
+    
+    # Copy only required files from builder
+    COPY .npmrc ./
+    COPY --from=builder /app/package*.json ./
+    COPY --from=builder /app/dist ./dist
+    
+    # Install production dependencies only
+    RUN npm install --omit=dev --ignore-scripts
+    
+    # Optionally copy Firebase service key if you prefer file-based secrets
+    # COPY firebase-service-key.json ./firebase-service-key.json
+    
+    # Set environment variable if you're using base64 version of Firebase key
+    # ENV FIREBASE_KEY_B64=your_base64_key_here
+    
+    # Expose application port
+    EXPOSE 3000
+    
+    # Start the app (adjust if your entry point isn't dist/main.js)
+    CMD ["node", "dist/src/main.js"]
+    
