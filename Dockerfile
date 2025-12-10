@@ -16,15 +16,16 @@ RUN npm ci
 COPY tsconfig*.json ./
 COPY src ./src
 
-# Build the project
-RUN npm run build
+# Build the project with verbose logging
+# This will print all TypeScript errors during Docker build
+RUN npm run build || { echo "TypeScript build failed"; exit 1; }
 
 # ---------- STAGE 2: Runtime ----------
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV TZ=UTC
 ENV NODE_ENV=production
-
+#test
 # Copy production dependencies
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev
