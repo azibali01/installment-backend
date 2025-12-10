@@ -33,6 +33,6 @@ RUN npm ci --omit=dev
 # Copy built files
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./server.js
-
+#test 2
 EXPOSE 3000
 CMD ["node", "server.js"]
