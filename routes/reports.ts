@@ -390,6 +390,8 @@ router.get(
             ]
           : [0, 0, 0];
       };
+      
+      const [borderGrayR, borderGrayG, borderGrayB] = hexToRgb(borderGray);
 
       // Helper function to draw colored box
       const drawColoredBox = (x: number, y: number, width: number, height: number, hexColor: string) => {
