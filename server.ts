@@ -38,6 +38,10 @@ getJwtSecret()
 const app = express()
 const PORT = process.env.PORT || 5000
 
+// Trust proxy - required for rate limiting behind reverse proxy (CapRover/nginx)
+// This allows express-rate-limit to correctly identify client IPs from X-Forwarded-For header
+app.set('trust proxy', true)
+
 const FRONTEND_URL = getFrontendUrl()
 const envList = process.env.FRONTEND_URLS || ""
 

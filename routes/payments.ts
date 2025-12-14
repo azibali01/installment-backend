@@ -254,8 +254,16 @@ router.post(
             console.error("Stack:", paymentErr?.stack)
             console.error("Name:", paymentErr?.name)
             console.error("Errors:", JSON.stringify(paymentErr?.errors, null, 2))
-            await session.abortTransaction()
-            session.endSession()
+            try {
+              await session.abortTransaction()
+            } catch (abortErr) {
+              console.error("Error aborting transaction:", abortErr)
+            }
+            try {
+              session.endSession()
+            } catch (endErr) {
+              console.error("Error ending session:", endErr)
+            }
             throw paymentErr
           }
           
@@ -269,14 +277,35 @@ router.post(
             console.error("Stack:", planErr?.stack)
             console.error("Name:", planErr?.name)
             console.error("Errors:", JSON.stringify(planErr?.errors, null, 2))
-            await session.abortTransaction()
-            session.endSession()
+            try {
+              await session.abortTransaction()
+            } catch (abortErr) {
+              console.error("Error aborting transaction:", abortErr)
+            }
+            try {
+              session.endSession()
+            } catch (endErr) {
+              console.error("Error ending session:", endErr)
+            }
             throw planErr
           }
           
-          await session.commitTransaction()
-          session.endSession()
-          return res.status(201).json({ payment, allocation: allocationResult })
+          try {
+            await session.commitTransaction()
+            session.endSession()
+            return res.status(201).json({ payment, allocation: allocationResult })
+          } catch (commitErr: any) {
+            console.error("=== Transaction commit error ===")
+            console.error("Error:", commitErr?.message)
+            // If commit fails, try to abort
+            try {
+              await session.abortTransaction()
+            } catch (_) {}
+            try {
+              session.endSession()
+            } catch (_) {}
+            throw commitErr
+          }
         }
 
         // Fallback: non-transactional with compensating actions
