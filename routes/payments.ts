@@ -214,6 +214,16 @@ router.post(
           throw new Error(`Invalid installmentMonth: ${installmentMonth}`)
         }
         
+        // Log payment data before creation for debugging
+        console.log("=== Creating Payment ===")
+        console.log("installmentPlanId:", installmentPlanId)
+        console.log("installmentMonth:", normalizedInstallmentMonth)
+        console.log("amount:", Number(amount))
+        console.log("paymentDate:", paymentDateObj)
+        console.log("recordedBy:", req.user?.id)
+        console.log("breakdown:", JSON.stringify(normalizedBreakdown, null, 2))
+        console.log("========================")
+        
         const payment = new Payment({
           installmentPlanId,
           installmentMonth: normalizedInstallmentMonth,
@@ -225,8 +235,36 @@ router.post(
         })
 
         if (usingTransaction && session) {
-          await payment.save({ session })
-          await plan.save({ session })
+          try {
+            console.log("Saving payment with transaction...")
+            await payment.save({ session })
+            console.log("Payment saved successfully")
+          } catch (paymentErr: any) {
+            console.error("=== Payment save error (transaction) ===")
+            console.error("Error:", paymentErr?.message)
+            console.error("Stack:", paymentErr?.stack)
+            console.error("Name:", paymentErr?.name)
+            console.error("Errors:", JSON.stringify(paymentErr?.errors, null, 2))
+            await session.abortTransaction()
+            session.endSession()
+            throw paymentErr
+          }
+          
+          try {
+            console.log("Saving plan with transaction...")
+            await plan.save({ session })
+            console.log("Plan saved successfully")
+          } catch (planErr: any) {
+            console.error("=== Plan save error (transaction) ===")
+            console.error("Error:", planErr?.message)
+            console.error("Stack:", planErr?.stack)
+            console.error("Name:", planErr?.name)
+            console.error("Errors:", JSON.stringify(planErr?.errors, null, 2))
+            await session.abortTransaction()
+            session.endSession()
+            throw planErr
+          }
+          
           await session.commitTransaction()
           session.endSession()
           return res.status(201).json({ payment, allocation: allocationResult })
@@ -234,8 +272,15 @@ router.post(
 
         // Fallback: non-transactional with compensating actions
         try {
+          console.log("Saving payment (non-transactional)...")
           await payment.save()
-        } catch (err) {
+          console.log("Payment saved successfully")
+        } catch (err: any) {
+          console.error("=== Payment save error (non-transactional) ===")
+          console.error("Error:", err?.message)
+          console.error("Stack:", err?.stack)
+          console.error("Name:", err?.name)
+          console.error("Errors:", JSON.stringify(err?.errors, null, 2))
           if (usingTransaction && session) {
             await session.abortTransaction()
             session.endSession()
@@ -244,12 +289,20 @@ router.post(
         }
 
         try {
+          console.log("Saving plan (non-transactional)...")
           await plan.save()
+          console.log("Plan saved successfully")
           return res.status(201).json({ payment, allocation: allocationResult })
-        } catch (planSaveErr) {
+        } catch (planSaveErr: any) {
+          console.error("=== Plan save error (non-transactional) ===")
+          console.error("Error:", planSaveErr?.message)
+          console.error("Stack:", planSaveErr?.stack)
+          console.error("Name:", planSaveErr?.name)
+          console.error("Errors:", JSON.stringify(planSaveErr?.errors, null, 2))
           // Attempt to roll back saved payment
           try {
             await Payment.deleteOne({ _id: payment._id })
+            console.log("Payment rolled back successfully")
           } catch (cleanupErr) {
             console.error("Failed to cleanup payment after plan save failure:", cleanupErr)
           }
