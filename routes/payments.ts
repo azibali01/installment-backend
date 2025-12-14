@@ -165,6 +165,13 @@ router.post(
           plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - Number(amount))
         }
 
+        // Ensure breakdown is always provided (required by schema)
+        const breakdown = allocationResult?.breakdown || { 
+          principal: Number(amount), 
+          interest: 0, 
+          fees: 0 
+        }
+        
         const payment = new Payment({
           installmentPlanId,
           installmentMonth: installmentMonth || 0,
@@ -172,7 +179,7 @@ router.post(
           paymentDate,
           recordedBy: req.user?.id,
           notes,
-          breakdown: allocationResult ? allocationResult.breakdown : undefined,
+          breakdown,
         })
 
         if (usingTransaction && session) {
