@@ -43,9 +43,11 @@ const envList = process.env.FRONTEND_URLS || ""
 
 // Default localhost origins for development
 const defaultLocal = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
+// Determine if we're in production: check NODE_ENV OR if FRONTEND_URLS is set (indicates deployment)
+const isProductionEnv = NODE_ENV === "production" || (envList.length > 0 && !envList.includes("localhost"))
 // Combine environment URLs with localhost defaults
 // In production, only use envList; in dev, add localhost origins
-const combinedEnv = NODE_ENV === "production" 
+const combinedEnv = isProductionEnv
   ? envList 
   : [envList].filter(Boolean).concat(defaultLocal).join(',')
 
@@ -53,7 +55,7 @@ const corsOptions = createCorsOptions(combinedEnv || FRONTEND_URL)
 const allowedOrigins = parseAllowedOrigins(combinedEnv || FRONTEND_URL)
 
 // Always log CORS configuration for debugging
-console.log(`${new Date().toISOString()} - CORS Config - NODE_ENV=${NODE_ENV} - FRONTEND_URL=${FRONTEND_URL} - FRONTEND_URLS=${envList} - combined=${combinedEnv}`)
+console.log(`${new Date().toISOString()} - CORS Config - NODE_ENV=${NODE_ENV} - isProductionEnv=${isProductionEnv} - FRONTEND_URL=${FRONTEND_URL} - FRONTEND_URLS=${envList} - combined=${combinedEnv}`)
 console.log(`${new Date().toISOString()} - Allowed Origins: ${JSON.stringify(allowedOrigins)}`)
 
 if (NODE_ENV !== "production") {
@@ -75,7 +77,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     if (!origin) return next()
 
     // In development, if no explicit FRONTEND_URLS provided, echo any origin
-    if (process.env.NODE_ENV !== 'production' && (!process.env.FRONTEND_URL && !process.env.FRONTEND_URLS)) {
+    // BUT: If FRONTEND_URLS is set (even if NODE_ENV is not production), use strict CORS
+    const isProductionEnv = NODE_ENV === "production" || (envList.length > 0 && !envList.includes("localhost"))
+    if (!isProductionEnv && (!process.env.FRONTEND_URL && !process.env.FRONTEND_URLS)) {
       res.header("Access-Control-Allow-Origin", origin)
       res.header("Access-Control-Allow-Credentials", "true")
       res.header(

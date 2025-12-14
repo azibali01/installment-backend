@@ -23,9 +23,13 @@ export function parseAllowedOrigins(env?: string): Array<string | RegExp> {
 
 export function createCorsOptions(frontendEnv?: string): CorsOptions {
     const allowed = parseAllowedOrigins(frontendEnv)
+    // Check if we're in production: NODE_ENV OR if frontendEnv contains non-localhost URLs
+    const isProduction = process.env.NODE_ENV === 'production' || 
+                        (frontendEnv && frontendEnv.length > 0 && !frontendEnv.includes("localhost"))
 
     // In development, allow all origins if none specified
-    if (process.env.NODE_ENV !== 'production' && allowed.length === 0) {
+    // BUT: If frontendEnv is provided (even in dev), use strict CORS
+    if (!isProduction && allowed.length === 0) {
         return {
             origin: true,
             methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
