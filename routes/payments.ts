@@ -81,44 +81,18 @@ router.post(
 
 
       // Try to use a transaction; fallback if transactions are not supported
+      // IMPORTANT: Transactions only work with MongoDB replica sets or mongos
+      // For standalone MongoDB (common in development/simple deployments), skip transactions
       let session: any = null
       let usingTransaction = false
+      
+      // Don't attempt transactions - they fail on standalone MongoDB
+      // The error shows "Transaction numbers are only allowed on a replica set member or mongos"
+      // So we'll use non-transactional operations with proper error handling
+      console.log("Using non-transactional payment recording (MongoDB standalone mode)")
+      
       try {
-        session = await mongoose.startSession()
-        try {
-          session.startTransaction()
-          usingTransaction = true
-        } catch (txErr: any) {
-          // Transaction not supported (e.g., standalone MongoDB)
-          if (session) {
-            try { session.endSession() } catch (_) {}
-          }
-          session = null
-          usingTransaction = false
-        }
-      } catch (err: any) {
-        // Session creation failed or transaction not supported
-        if (err?.message?.includes("replica set") || err?.message?.includes("mongos")) {
-          // Expected error for standalone MongoDB - silently fallback
-          if (session) {
-            try { session.endSession() } catch (_) {}
-          }
-          session = null
-          usingTransaction = false
-        } else {
-          // Unexpected error
-          if (session) {
-            try { session.endSession() } catch (_) {}
-          }
-          session = null
-          usingTransaction = false
-        }
-      }
-
-      try {
-        const plan = usingTransaction
-          ? await InstallmentPlan.findById(installmentPlanId).session(session)
-          : await InstallmentPlan.findById(installmentPlanId)
+        const plan = await InstallmentPlan.findById(installmentPlanId)
         if (!plan) {
           if (usingTransaction && session) {
             await session.abortTransaction()
@@ -140,10 +114,6 @@ router.post(
         if (installmentMonth) {
           const idx = installmentMonth - 1
           if (!plan.installmentSchedule[idx]) {
-            if (usingTransaction && session) {
-              await session.abortTransaction()
-              session.endSession()
-            }
             return res.status(400).json({ error: "Installment month not found on plan" })
           }
           const entry = plan.installmentSchedule[idx]
