@@ -58,8 +58,17 @@ router.post(
         return res.status(401).json({ error: "User not authenticated" })
       }
       
+      // Validate ObjectIds
+      if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+        return res.status(400).json({ error: `Invalid user ID: ${req.user.id}` })
+      }
+      
       if (!installmentPlanId) {
         return res.status(400).json({ error: "installmentPlanId is required" })
+      }
+      
+      if (!mongoose.Types.ObjectId.isValid(installmentPlanId)) {
+        return res.status(400).json({ error: `Invalid installmentPlanId: ${installmentPlanId}` })
       }
       
       if (!amount || Number(amount) <= 0) {
