@@ -52,6 +52,23 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { installmentPlanId, installmentMonth, amount, paymentDate, notes } = req.body
+      
+      // Validate required fields
+      if (!req.user?.id) {
+        return res.status(401).json({ error: "User not authenticated" })
+      }
+      
+      if (!installmentPlanId) {
+        return res.status(400).json({ error: "installmentPlanId is required" })
+      }
+      
+      if (!amount || Number(amount) <= 0) {
+        return res.status(400).json({ error: "Valid amount is required" })
+      }
+      
+      if (!paymentDate) {
+        return res.status(400).json({ error: "paymentDate is required" })
+      }
 
 
       // Try to use a transaction; fallback if transactions are not supported
@@ -172,14 +189,39 @@ router.post(
           fees: 0 
         }
         
+        // Validate and normalize breakdown structure
+        const normalizedBreakdown = {
+          principal: Number(breakdown.principal || amount),
+          interest: Number(breakdown.interest || 0),
+          fees: Number(breakdown.fees || 0),
+          downPaymentApplied: Number(breakdown.downPaymentApplied || 0),
+        }
+        
+        // Validate breakdown values
+        if (isNaN(normalizedBreakdown.principal) || isNaN(normalizedBreakdown.interest)) {
+          throw new Error(`Invalid breakdown values: principal=${breakdown.principal}, interest=${breakdown.interest}`)
+        }
+        
+        // Ensure paymentDate is a valid Date object
+        const paymentDateObj = paymentDate instanceof Date ? paymentDate : new Date(paymentDate)
+        if (isNaN(paymentDateObj.getTime())) {
+          throw new Error(`Invalid paymentDate: ${paymentDate}`)
+        }
+        
+        // Validate installmentMonth
+        const normalizedInstallmentMonth = installmentMonth ? Number(installmentMonth) : 0
+        if (installmentMonth && (isNaN(normalizedInstallmentMonth) || normalizedInstallmentMonth < 0)) {
+          throw new Error(`Invalid installmentMonth: ${installmentMonth}`)
+        }
+        
         const payment = new Payment({
           installmentPlanId,
-          installmentMonth: installmentMonth || 0,
-          amount,
-          paymentDate,
+          installmentMonth: normalizedInstallmentMonth,
+          amount: Number(amount),
+          paymentDate: paymentDateObj,
           recordedBy: req.user?.id,
-          notes,
-          breakdown,
+          notes: notes || undefined,
+          breakdown: normalizedBreakdown,
         })
 
         if (usingTransaction && session) {
@@ -218,8 +260,28 @@ router.post(
           try { await session.abortTransaction() } catch (_) { }
           try { session.endSession() } catch (_) {}
         }
-        // Log error for debugging (server-side only)
-        console.error("Payment recording error:", err?.message || err, err?.stack)
+        // Log FULL error details for debugging (server-side only)
+        console.error("=== Payment recording error ===")
+        console.error("Error message:", err?.message || err)
+        console.error("Error stack:", err?.stack)
+        console.error("Error name:", err?.name)
+        console.error("Error code:", err?.code)
+        console.error("Error details:", JSON.stringify(err, null, 2))
+        console.error("Request body:", JSON.stringify(req.body, null, 2))
+        console.error("User ID:", req.user?.id)
+        console.error("================================")
+        
+        // Check for specific MongoDB validation errors
+        if (err?.name === "ValidationError") {
+          const validationErrors = Object.values(err.errors || {}).map((e: any) => e.message).join(", ")
+          return res.status(400).json({ error: `Validation error: ${validationErrors}` })
+        }
+        
+        // Check for CastError (invalid ObjectId, etc.)
+        if (err?.name === "CastError") {
+          return res.status(400).json({ error: `Invalid ${err.path}: ${err.value}` })
+        }
+        
         // Don't expose transaction errors to user - use generic message
         const errorMessage = err?.message?.includes("replica set") || err?.message?.includes("mongos")
           ? "Failed to record payment. Please try again."
@@ -227,8 +289,28 @@ router.post(
         return res.status(500).json({ error: errorMessage })
       }
     } catch (error: any) {
-      // Log error for debugging (server-side only)
-      console.error("Payment recording outer error:", error?.message || error, error?.stack)
+      // Log FULL error details for debugging (server-side only)
+      console.error("=== Payment recording OUTER error ===")
+      console.error("Error message:", error?.message || error)
+      console.error("Error stack:", error?.stack)
+      console.error("Error name:", error?.name)
+      console.error("Error code:", error?.code)
+      console.error("Error details:", JSON.stringify(error, null, 2))
+      console.error("Request body:", JSON.stringify(req.body, null, 2))
+      console.error("User ID:", req.user?.id)
+      console.error("====================================")
+      
+      // Check for specific MongoDB validation errors
+      if (error?.name === "ValidationError") {
+        const validationErrors = Object.values(error.errors || {}).map((e: any) => e.message).join(", ")
+        return res.status(400).json({ error: `Validation error: ${validationErrors}` })
+      }
+      
+      // Check for CastError (invalid ObjectId, etc.)
+      if (error?.name === "CastError") {
+        return res.status(400).json({ error: `Invalid ${error.path}: ${error.value}` })
+      }
+      
       // Don't expose transaction errors to user
       const errorMessage = error?.message?.includes("replica set") || error?.message?.includes("mongos")
         ? "Failed to record payment. Please try again."
