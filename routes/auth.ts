@@ -77,11 +77,13 @@ router.post(
       await RefreshToken.create({ token: refreshTokenValue, user: user._id, expiresAt: refreshExpires })
 
 
+      // For cross-site cookies (production), sameSite must be "none" AND secure must be true
+      const isProduction = process.env.NODE_ENV === "production"
       res.cookie("refreshToken", refreshTokenValue, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        path: "/api",
+        secure: isProduction, // Required for sameSite: "none"
+        sameSite: isProduction ? "none" : "lax",
+        path: "/", // Set to root path so it's available for all routes
         expires: refreshExpires,
       })
 
@@ -121,11 +123,13 @@ router.post("/refresh", async (req: Request, res: Response) => {
     const accessToken = jwt.sign({ id: user._id, role: user.role }, getJwtSecret(), { expiresIn: "15m" })
 
 
+    // For cross-site cookies (production), sameSite must be "none" AND secure must be true
+    const isProduction = process.env.NODE_ENV === "production"
     res.cookie("refreshToken", newRefreshValue, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      path: "/api",
+      secure: isProduction, // Required for sameSite: "none"
+      sameSite: isProduction ? "none" : "lax",
+      path: "/", // Set to root path so it's available for all routes
       expires: newRefreshExpires,
     })
 
@@ -142,7 +146,12 @@ router.post("/logout", async (req: Request, res: Response) => {
     if (cookie) {
       await RefreshToken.deleteOne({ token: cookie })
     }
-    res.clearCookie("refreshToken", { path: "/api", sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", secure: process.env.NODE_ENV === "production" })
+    const isProduction = process.env.NODE_ENV === "production"
+    res.clearCookie("refreshToken", { 
+      path: "/", 
+      sameSite: isProduction ? "none" : "lax", 
+      secure: isProduction 
+    })
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "Logout failed" })
