@@ -1,6 +1,8 @@
 import mongoose, { Schema, type Document } from "mongoose"
+import { getNextSequence } from "../utils/counters.js"
 
 export interface IInstallmentPlan extends Document {
+  installmentId?: string
   customerId: mongoose.Types.ObjectId
   productId: mongoose.Types.ObjectId
   createdBy?: mongoose.Types.ObjectId
@@ -22,6 +24,7 @@ export interface IInstallmentPlan extends Document {
   markupPercent?: number
   status: "pending" | "approved" | "rejected" | "completed"
   approvedBy?: mongoose.Types.ObjectId
+  reference?: string
   guarantors?: Array<{
     name?: string
     relation?: string
@@ -36,6 +39,9 @@ export interface IInstallmentPlan extends Document {
     status: "pending" | "paid" | "overdue"
     paidDate?: Date
     paidAmount?: number
+    principal?: number
+    interest?: number
+    balance?: number
   }>
   createdAt: Date
   updatedAt: Date
@@ -43,6 +49,7 @@ export interface IInstallmentPlan extends Document {
 
 const installmentPlanSchema = new Schema<IInstallmentPlan>(
   {
+    installmentId: { type: String, unique: true, sparse: true },
     customerId: { type: Schema.Types.ObjectId, ref: "Customer", required: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "User" },
     productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
@@ -64,6 +71,7 @@ const installmentPlanSchema = new Schema<IInstallmentPlan>(
     endDate: { type: Date, required: true },
     status: { type: String, enum: ["pending", "approved", "rejected", "completed"], default: "pending" },
     approvedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    reference: { type: String },
     guarantors: [
       {
         name: String,
@@ -81,13 +89,51 @@ const installmentPlanSchema = new Schema<IInstallmentPlan>(
         status: { type: String, enum: ["pending", "paid", "overdue"], default: "pending" },
         paidDate: Date,
         paidAmount: { type: Number, default: 0 },
+        principal: Number,
+        interest: Number,
+        balance: Number,
       },
     ],
   },
   { timestamps: true },
 )
 
+installmentPlanSchema.pre("save", async function (next) {
+  // Auto-generate installmentId if not provided and this is a new document
+  if (this.isNew && !this.installmentId) {
+    try {
+      // Use counter collection for numeric IDs
+      const nextNum = await getNextSequence("installmentId")
+      this.installmentId = String(nextNum)
+    } catch (error) {
+      // Fallback: Find the maximum numeric installmentId and increment by 1
+      try {
+        const maxPlan = await mongoose.model<IInstallmentPlan>("InstallmentPlan")
+          .findOne({ installmentId: { $exists: true, $regex: /^\d+$/ } })
+          .sort({ installmentId: -1 })
+          .select("installmentId")
+          .lean()
+        
+        if (maxPlan && maxPlan.installmentId) {
+          const maxNum = parseInt(maxPlan.installmentId, 10)
+          this.installmentId = String(isNaN(maxNum) ? 1 : maxNum + 1)
+        } else {
+          this.installmentId = "1"
+        }
+      } catch (fallbackError) {
+        // If error, start from 1
+        this.installmentId = "1"
+      }
+    }
+  }
+  next()
+})
+
 installmentPlanSchema.index({ customerId: 1 })
 installmentPlanSchema.index({ createdAt: -1 })
+installmentPlanSchema.index({ installmentId: 1 })
+installmentPlanSchema.index({ status: 1 })
+installmentPlanSchema.index({ productId: 1 })
+installmentPlanSchema.index({ "installmentSchedule.dueDate": 1 }) // For reports and overdue queries
 
 export default mongoose.model<IInstallmentPlan>("InstallmentPlan", installmentPlanSchema)

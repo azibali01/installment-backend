@@ -1,0 +1,5 @@
+FRONTEND_URLS=https://installment-frontend-iota.vercel.app
+JWT_SECRET=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f
+MONGODB_URI=mongodb://root:Whatever123!!@mongo.goodgoodcarwash.com:27018/?authSource=admin
+MONGO_DB_NAME=installments
+PORT=3000

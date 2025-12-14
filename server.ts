@@ -20,9 +20,17 @@ import expenseRoutes from "./routes/expenses.js"
 import reportRoutes from "./routes/reports.js"
 import contactRoutes from "./routes/contacts.js"
 import roleRoutes from "./routes/roles.js"
+import cashRoutes from "./routes/cash.js"
 import RolePermission from "./models/RolePermission.js"
 
-dotenv.config()
+import path from "path"
+import { fileURLToPath } from "url"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+// Load environment variables from env file
+dotenv.config({ path: path.resolve(__dirname, "./env") })
 
 
 getJwtSecret()
@@ -184,8 +192,8 @@ connectDB()
 
 
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // Increased from 10 to 50 login attempts per 15 minutes
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req: Request, res: Response) => {
@@ -193,7 +201,7 @@ const authLimiter = rateLimit({
         const origin = req.headers.origin as string | undefined
         if (origin) setCorsHeadersForReq(res, origin)
     } catch (err) {}
-    res.status(429).json({ error: "Too many requests" })
+    res.status(429).json({ error: "Too many requests. Please try again after 15 minutes." })
   }
 })
 app.use("/api/auth", authLimiter, authRoutes)
@@ -207,6 +215,7 @@ app.use("/api/expenses", expenseRoutes)
 app.use("/api/reports", reportRoutes)
 app.use("/api/roles", roleRoutes)
 app.use("/api/contacts", contactRoutes)
+app.use("/api/cash", cashRoutes)
 
 
 import errorHandler from "./middleware/errorHandler.js"

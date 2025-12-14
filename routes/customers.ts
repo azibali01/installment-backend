@@ -3,31 +3,25 @@ import { authenticate, authorizePermission } from "../middleware/auth.js"
 import Customer from "../models/Customer.js"
 import { body, param } from "express-validator"
 import { validateRequest } from "../middleware/validate.js"
+import { asyncHandler } from "../middleware/asyncHandler.js"
+import { NotFoundError, ConflictError } from "../utils/errors.js"
 
 const router = express.Router()
 
-router.get("/", authenticate, async (req: Request, res: Response) => {
-  try {
-    const customers = await Customer.find()
-    res.json(customers)
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch customers" })
-  }
-})
+router.get("/", authenticate, asyncHandler(async (req: Request, res: Response) => {
+  const customers = await Customer.find().sort({ customerId: 1 })
+  res.json(customers)
+}))
 
 router.get(
   "/:id",
   authenticate,
   [param("id").isMongoId().withMessage("Invalid customer id"), validateRequest],
-  async (req: Request, res: Response) => {
-    try {
-      const customer = await Customer.findById(req.params.id)
-      if (!customer) return res.status(404).json({ error: "Customer not found" })
-      res.json(customer)
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch customer" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const customer = await Customer.findById(req.params.id)
+    if (!customer) throw new NotFoundError("Customer")
+    res.json(customer)
+  }),
 )
 
 router.post(
@@ -78,15 +72,11 @@ router.put(
     body("cast").optional().isString().isLength({ max: 100 }).withMessage("cast must be a string up to 100 chars"),
     validateRequest,
   ],
-  async (req: Request, res: Response) => {
-    try {
-
-      const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, { new: true })
-      res.json(customer)
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update customer" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, { new: true })
+    if (!customer) throw new NotFoundError("Customer")
+    res.json(customer)
+  }),
 )
 
 router.delete(
@@ -94,15 +84,11 @@ router.delete(
   authenticate,
   authorizePermission("manage_customers"),
   [param("id").isMongoId().withMessage("Invalid customer id"), validateRequest],
-  async (req: Request, res: Response) => {
-    try {
-      const deleted = await Customer.findByIdAndDelete(req.params.id)
-      if (!deleted) return res.status(404).json({ error: "Customer not found" })
-      res.json({ success: true })
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete customer" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const deleted = await Customer.findByIdAndDelete(req.params.id)
+    if (!deleted) throw new NotFoundError("Customer")
+    res.json({ success: true })
+  }),
 )
 
 export default router

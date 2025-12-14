@@ -8,6 +8,7 @@ export interface IUser extends Document {
   role: "admin" | "manager" | "employee"
   phone?: string
   salary?: number
+  cashBalance: number
   isActive: boolean
   createdAt: Date
   updatedAt: Date
@@ -22,6 +23,7 @@ const userSchema = new Schema<IUser>(
     role: { type: String, enum: ["admin", "manager", "employee"], required: true },
     phone: String,
     salary: Number,
+    cashBalance: { type: Number, default: 0, min: 0 },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true },

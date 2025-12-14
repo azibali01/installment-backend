@@ -6,7 +6,7 @@ dotenv.config()
 
 
 
-const admin = { name: "Admin", email: "admin@shop.com", password: "admin123", role: "admin" }
+const admin = { name: "Admin", email: "admin@shop.com", password: "admin#123", role: "admin" }
 
 async function seed() {
     try {

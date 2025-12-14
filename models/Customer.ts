@@ -1,7 +1,9 @@
 import mongoose, { Schema, type Document } from "mongoose"
 import { normalizeCNIC, formatCNIC } from "../utils/cnic.js"
+import { getNextSequence } from "../utils/counters.js"
 
 export interface ICustomer extends Document {
+  customerId?: number
   name: string
   phone: string
   cnic: string
@@ -14,6 +16,7 @@ export interface ICustomer extends Document {
 
 const customerSchema = new Schema<ICustomer>(
   {
+    customerId: { type: Number, unique: true, sparse: true },
     name: { type: String, required: true },
     phone: { type: String, required: true },
     cnic: { type: String, required: true, unique: true },
@@ -24,12 +27,34 @@ const customerSchema = new Schema<ICustomer>(
   { timestamps: true },
 )
 
+// Add indexes for frequently queried fields
+customerSchema.index({ phone: 1 })
+customerSchema.index({ customerId: 1 })
+customerSchema.index({ name: "text" }) // Text search index
 
-customerSchema.pre("save", function (next) {
+customerSchema.pre("save", async function (next) {
   if (this.isModified("cnic") && this.cnic) {
     const normalized = normalizeCNIC(this.cnic as unknown as string)
     if (normalized) this.cnic = normalized as unknown as string
   }
+  
+  // Auto-generate customerId if not provided and this is a new document
+  if (this.isNew && !this.customerId) {
+    try {
+      // Use counter collection for better performance
+      this.customerId = await getNextSequence("customerId")
+    } catch (error) {
+      // Fallback: Find the maximum customerId and increment by 1
+      try {
+        const maxCustomer = await mongoose.model<ICustomer>("Customer").findOne().sort({ customerId: -1 }).select("customerId").lean()
+        this.customerId = maxCustomer && maxCustomer.customerId ? maxCustomer.customerId + 1 : 1
+      } catch (fallbackError) {
+        // If error, start from 1
+        this.customerId = 1
+      }
+    }
+  }
+  
   next()
 })
 

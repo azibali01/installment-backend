@@ -56,4 +56,11 @@ const paymentSchema = new Schema<IPayment>(
   { timestamps: true },
 )
 
+// Add indexes for frequently queried fields
+paymentSchema.index({ installmentPlanId: 1 })
+paymentSchema.index({ paymentDate: -1 })
+paymentSchema.index({ recordedBy: 1 })
+paymentSchema.index({ createdAt: -1 })
+paymentSchema.index({ status: 1 })
+
 export default mongoose.model<IPayment>("Payment", paymentSchema)
