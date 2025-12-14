@@ -24,7 +24,7 @@ export function parseAllowedOrigins(env?: string): Array<string | RegExp> {
 export function createCorsOptions(frontendEnv?: string): CorsOptions {
     const allowed = parseAllowedOrigins(frontendEnv)
 
-  
+    // In development, allow all origins if none specified
     if (process.env.NODE_ENV !== 'production' && allowed.length === 0) {
         return {
             origin: true,
@@ -39,17 +39,24 @@ export function createCorsOptions(frontendEnv?: string): CorsOptions {
     return {
         origin(origin, callback) {
             try {
-
+                // Allow requests without origin (e.g., Postman, curl)
                 if (!origin) return callback(null, true)
 
+                // Check if origin matches any allowed origin
                 const ok = allowed.some((a) => {
-                    if (typeof a === 'string') return a === origin
+                    if (typeof a === 'string') {
+                        // Exact match or match without trailing slash
+                        return a === origin || a === origin.replace(/\/$/, '')
+                    }
                     return (a as RegExp).test(origin)
                 })
 
-                if (ok) return callback(null, true)
+                if (ok) {
+                    console.log(`✅ CORS allowed: ${origin}`)
+                    return callback(null, true)
+                }
 
-                console.warn('Blocked CORS origin:', origin)
+                console.warn(`❌ CORS blocked: ${origin} (allowed: ${JSON.stringify(allowed)})`)
                 return callback(null, false)
             } catch (err) {
                 console.error('CORS origin check error:', err)

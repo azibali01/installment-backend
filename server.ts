@@ -41,16 +41,22 @@ const PORT = process.env.PORT || 5000
 const FRONTEND_URL = getFrontendUrl()
 const envList = process.env.FRONTEND_URLS || ""
 
-
+// Default localhost origins for development
 const defaultLocal = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
-const combinedEnv = [envList].filter(Boolean).concat(defaultLocal).join(',')
+// Combine environment URLs with localhost defaults
+// In production, only use envList; in dev, add localhost origins
+const combinedEnv = NODE_ENV === "production" 
+  ? envList 
+  : [envList].filter(Boolean).concat(defaultLocal).join(',')
 
 const corsOptions = createCorsOptions(combinedEnv || FRONTEND_URL)
 const allowedOrigins = parseAllowedOrigins(combinedEnv || FRONTEND_URL)
 
-if (NODE_ENV !== "production") {
-  console.log(`${new Date().toISOString()} - NODE_ENV=${NODE_ENV} - using FRONTEND_URL=${FRONTEND_URL} - FRONTEND_URLS=${envList} - combined=${combinedEnv}`)
+// Always log CORS configuration for debugging
+console.log(`${new Date().toISOString()} - CORS Config - NODE_ENV=${NODE_ENV} - FRONTEND_URL=${FRONTEND_URL} - FRONTEND_URLS=${envList} - combined=${combinedEnv}`)
+console.log(`${new Date().toISOString()} - Allowed Origins: ${JSON.stringify(allowedOrigins)}`)
 
+if (NODE_ENV !== "production") {
   app.use((req, _res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl} - origin: ${req.headers.origin || "<none>"}`)
     next()

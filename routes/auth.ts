@@ -77,12 +77,17 @@ router.post(
       await RefreshToken.create({ token: refreshTokenValue, user: user._id, expiresAt: refreshExpires })
 
 
-      // For cross-site cookies (production), sameSite must be "none" AND secure must be true
+      // For cross-site cookies, sameSite must be "none" AND secure must be true
+      // Check if we're in production OR if HTTPS is being used (for deployed environments)
       const isProduction = process.env.NODE_ENV === "production"
+      const isHTTPS = req.protocol === "https" || req.get("x-forwarded-proto") === "https"
+      // Use "none" for cross-site cookies when HTTPS is detected, even if NODE_ENV is not set
+      const useCrossSiteCookies = isProduction || isHTTPS
+      
       res.cookie("refreshToken", refreshTokenValue, {
         httpOnly: true,
-        secure: isProduction, // Required for sameSite: "none"
-        sameSite: isProduction ? "none" : "lax",
+        secure: useCrossSiteCookies, // Required for sameSite: "none"
+        sameSite: useCrossSiteCookies ? "none" : "lax",
         path: "/", // Set to root path so it's available for all routes
         expires: refreshExpires,
       })
@@ -123,12 +128,17 @@ router.post("/refresh", async (req: Request, res: Response) => {
     const accessToken = jwt.sign({ id: user._id, role: user.role }, getJwtSecret(), { expiresIn: "15m" })
 
 
-    // For cross-site cookies (production), sameSite must be "none" AND secure must be true
+    // For cross-site cookies, sameSite must be "none" AND secure must be true
+    // Check if we're in production OR if HTTPS is being used (for deployed environments)
     const isProduction = process.env.NODE_ENV === "production"
+    const isHTTPS = req.protocol === "https" || req.get("x-forwarded-proto") === "https"
+    // Use "none" for cross-site cookies when HTTPS is detected, even if NODE_ENV is not set
+    const useCrossSiteCookies = isProduction || isHTTPS
+    
     res.cookie("refreshToken", newRefreshValue, {
       httpOnly: true,
-      secure: isProduction, // Required for sameSite: "none"
-      sameSite: isProduction ? "none" : "lax",
+      secure: useCrossSiteCookies, // Required for sameSite: "none"
+      sameSite: useCrossSiteCookies ? "none" : "lax",
       path: "/", // Set to root path so it's available for all routes
       expires: newRefreshExpires,
     })
@@ -147,10 +157,13 @@ router.post("/logout", async (req: Request, res: Response) => {
       await RefreshToken.deleteOne({ token: cookie })
     }
     const isProduction = process.env.NODE_ENV === "production"
+    const isHTTPS = req.protocol === "https" || req.get("x-forwarded-proto") === "https"
+    const useCrossSiteCookies = isProduction || isHTTPS
+    
     res.clearCookie("refreshToken", { 
       path: "/", 
-      sameSite: isProduction ? "none" : "lax", 
-      secure: isProduction 
+      sameSite: useCrossSiteCookies ? "none" : "lax", 
+      secure: useCrossSiteCookies 
     })
     res.json({ success: true })
   } catch (err) {
