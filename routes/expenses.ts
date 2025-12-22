@@ -2,6 +2,7 @@ import express, { type Request, type Response } from "express"
 import mongoose from "mongoose"
 import { authenticate, authorize, authorizePermission } from "../middleware/auth.js"
 import Expense from "../models/Expense.js"
+import User from "../models/User.js"
 import { body, param } from "express-validator"
 import { validateRequest } from "../middleware/validate.js"
 
@@ -44,17 +45,32 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { category, amount, date, description, relatedUser } = req.body
+      const userId = req.user?.id
+
+      // Check if user has enough balance
+      const user = await User.findById(userId)
+      if (!user) {
+        return res.status(404).json({ error: "User not found" })
+      }
+
+      if (user.cashBalance < Number(amount)) {
+        return res.status(400).json({ error: "Insufficient cash balance" })
+      }
 
       const expense = new Expense({
         category,
         amount: Number(amount),
         date: new Date(date),
         description,
-        userId: req.user?.id,
+        userId,
         relatedUser,
       })
 
       await expense.save()
+
+      // Deduct from user's cash balance
+      await User.findByIdAndUpdate(userId, { $inc: { cashBalance: -Number(amount) } })
+
       res.status(201).json(expense)
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create expense" })
@@ -71,9 +87,13 @@ router.delete(
     try {
       const { id } = req.params
 
-      const deleted = await Expense.findByIdAndDelete(id)
+      const expense = await Expense.findById(id)
+      if (!expense) return res.status(404).json({ error: "Expense not found" })
 
-      if (!deleted) return res.status(404).json({ error: "Expense not found" })
+      // Refund the amount to the user
+      await User.findByIdAndUpdate(expense.userId, { $inc: { cashBalance: expense.amount } })
+
+      await expense.deleteOne()
 
       res.json({ success: true })
     } catch (error) {
@@ -112,8 +132,31 @@ router.put(
   async (req: Request, res: Response) => {
     try {
       const { id } = req.params
-      const update: any = {}
       const { category, amount, date, description, relatedUser } = req.body
+
+      const expense = await Expense.findById(id)
+      if (!expense) return res.status(404).json({ error: "Expense not found" })
+
+      if (amount !== undefined) {
+        const oldAmount = expense.amount
+        const newAmount = Number(amount)
+        const diff = newAmount - oldAmount
+
+        if (diff !== 0) {
+          // Check if user has enough balance for the increase
+          if (diff > 0) {
+            const user = await User.findById(expense.userId)
+            if (!user || user.cashBalance < diff) {
+              return res.status(400).json({ error: "Insufficient cash balance for update" })
+            }
+          }
+
+          // Adjust user balance
+          await User.findByIdAndUpdate(expense.userId, { $inc: { cashBalance: -diff } })
+        }
+      }
+
+      const update: any = {}
       if (category !== undefined) update.category = category
       if (amount !== undefined) update.amount = Number(amount)
       if (date !== undefined) update.date = new Date(date)
@@ -121,8 +164,6 @@ router.put(
       if (relatedUser !== undefined) update.relatedUser = relatedUser
 
       const updated = await Expense.findByIdAndUpdate(id, update, { new: true })
-
-      if (!updated) return res.status(404).json({ error: "Expense not found" })
 
       res.json(updated)
     } catch (error) {

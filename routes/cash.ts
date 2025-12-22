@@ -67,18 +67,32 @@ router.post(
 
     // Admin can transfer to anyone (no restriction)
 
-    // Perform transfer (atomic operation)
-    const session = await User.startSession()
-    session.startTransaction()
+    // Perform transfer (non-transactional for standalone DB)
+    
+    // 1. Deduct from sender first (Atomic check-and-update)
+    const updatedFrom = await User.findOneAndUpdate(
+      { _id: fromUserId, cashBalance: { $gte: amount } },
+      { $inc: { cashBalance: -amount } },
+      { new: true }
+    ).select("cashBalance")
+
+    if (!updatedFrom) {
+      throw new ValidationError("Insufficient cash balance or transfer failed")
+    }
 
     try {
-      // Deduct from sender
-      await User.findByIdAndUpdate(fromUserId, { $inc: { cashBalance: -amount } }, { session })
+      // 2. Add to recipient
+      const updatedTo = await User.findByIdAndUpdate(
+        toUserId, 
+        { $inc: { cashBalance: amount } },
+        { new: true }
+      ).select("cashBalance")
 
-      // Add to recipient
-      await User.findByIdAndUpdate(toUserId, { $inc: { cashBalance: amount } }, { session })
+      if (!updatedTo) {
+        throw new Error("Recipient not found during transfer")
+      }
 
-      // Create transfer record
+      // 3. Create transfer record
       const transfer = new CashTransfer({
         fromUser: fromUserId,
         toUser: toUserId,
@@ -87,30 +101,29 @@ router.post(
         status: "completed",
         createdBy: fromUserId,
       })
-      await transfer.save({ session })
-
-      await session.commitTransaction()
-
-      // Get updated balances
-      const updatedFrom = await User.findById(fromUserId).select("cashBalance")
-      const updatedTo = await User.findById(toUserId).select("cashBalance")
+      await transfer.save()
 
       res.status(201).json({
         message: "Cash transferred successfully",
         transfer: {
           id: transfer._id,
-          from: { id: fromUser._id, name: fromUser.name, balance: updatedFrom?.cashBalance },
-          to: { id: toUser._id, name: toUser.name, balance: updatedTo?.cashBalance },
+          from: { id: fromUser._id, name: fromUser.name, balance: updatedFrom.cashBalance },
+          to: { id: toUser._id, name: toUser.name, balance: updatedTo.cashBalance },
           amount,
           notes: transfer.notes,
           createdAt: transfer.createdAt,
         },
       })
     } catch (error) {
-      await session.abortTransaction()
+      // Compensation: Refund sender if recipient update or log fails
+      console.error("Transfer failed mid-process, attempting refund...", error)
+      try {
+        await User.findByIdAndUpdate(fromUserId, { $inc: { cashBalance: amount } })
+        console.log("Refund successful for user", fromUserId)
+      } catch (refundError) {
+        console.error("CRITICAL: Refund failed for user", fromUserId, refundError)
+      }
       throw error
-    } finally {
-      session.endSession()
     }
   }),
 )

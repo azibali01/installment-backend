@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 // Load env file from project root
-dotenv.config({ path: path.resolve(__dirname, "../env") })
+dotenv.config({ path: path.resolve(__dirname, "../.env") })
 
 const MONGODB_URI = process.env.MONGODB_URI
 

@@ -46,16 +46,19 @@ router.post(
     body("cast").optional().isString().isLength({ max: 100 }).withMessage("cast must be a string up to 100 chars"),
     validateRequest,
   ],
-  async (req: Request, res: Response) => {
-    try {
-      const { name, phone, cnic, address, so, cast } = req.body
-      const customer = new Customer({ name, phone, cnic, address, so, cast })
-      await customer.save()
-      res.status(201).json(customer)
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create customer" })
+  asyncHandler(async (req: Request, res: Response) => {
+    const { name, phone, cnic, address, so, cast } = req.body
+    
+    // Check for duplicate CNIC manually to return 409
+    const existing = await Customer.findOne({ cnic })
+    if (existing) {
+      throw new ConflictError(`Customer with CNIC ${cnic} already exists`)
     }
-  },
+
+    const customer = new Customer({ name, phone, cnic, address, so, cast })
+    await customer.save()
+    res.status(201).json(customer)
+  }),
 )
 
 router.put(

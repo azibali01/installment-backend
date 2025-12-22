@@ -29,7 +29,6 @@ const customerSchema = new Schema<ICustomer>(
 
 // Add indexes for frequently queried fields
 customerSchema.index({ phone: 1 })
-customerSchema.index({ customerId: 1 })
 customerSchema.index({ name: "text" }) // Text search index
 
 customerSchema.pre("save", async function (next) {

@@ -18,6 +18,7 @@ export interface IPayment extends Document {
   amount: number
   paymentDate: Date
   recordedBy: mongoose.Types.ObjectId
+  receivedBy?: mongoose.Types.ObjectId
   notes?: string
   breakdown?: PaymentBreakdown
   allocation?: AppliedMonth[]
@@ -42,6 +43,7 @@ const paymentSchema = new Schema<IPayment>(
     amount: { type: Number, required: true },
     paymentDate: { type: Date, required: true },
     recordedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    receivedBy: { type: Schema.Types.ObjectId, ref: "User" },
     notes: String,
     breakdown: {
       principal: { type: Number, required: true },

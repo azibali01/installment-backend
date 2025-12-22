@@ -111,6 +111,7 @@ router.get(
       upcomingEnd.setHours(23, 59, 59, 999);
 
       const baseUnwind: PipelineStage[] = [
+        { $match: { status: { $ne: "rejected" } } },
         { $unwind: "$installmentSchedule" },
         {
           $addFields: {
@@ -177,6 +178,8 @@ router.get(
         overdueList,
         cashInAgg,
         cashOutAgg,
+        expectedRevenueAgg,
+        totalRemainingAgg,
       ] = await Promise.all([
         InstallmentPlan.aggregate(
           makeCountPipeline({
@@ -222,10 +225,21 @@ router.get(
           )
         ),
         Payment.aggregate([
+          { $match: { status: { $ne: "reversed" } } },
           { $group: { _id: null, total: { $sum: "$amount" } } },
         ]),
         Expense.aggregate([
           { $group: { _id: null, total: { $sum: "$amount" } } },
+        ]),
+        InstallmentPlan.aggregate([
+          { $match: { status: { $ne: "rejected" } } },
+          { $unwind: "$installmentSchedule" },
+          { $match: { "installmentSchedule.dueDate": { $lte: endOfDay } } },
+          { $group: { _id: null, total: { $sum: "$installmentSchedule.amount" } } }
+        ]),
+        InstallmentPlan.aggregate([
+          { $match: { status: { $ne: "rejected" } } },
+          { $group: { _id: null, total: { $sum: "$remainingBalance" } } }
         ]),
       ]);
 
@@ -236,6 +250,8 @@ router.get(
 
       const totalCashIn = cashInAgg[0]?.total || 0;
       const totalCashOut = cashOutAgg[0]?.total || 0;
+      const totalExpectedRevenue = expectedRevenueAgg[0]?.total || 0;
+      const totalRemainingRevenue = totalRemainingAgg[0]?.total || 0;
 
       res.json({
         today: normalize(todayAgg),
@@ -246,6 +262,8 @@ router.get(
         overdueList,
         totalCashIn,
         totalCashOut,
+        totalExpectedRevenue,
+        totalRemainingRevenue,
       });
     } catch (error) {
       res
@@ -276,6 +294,13 @@ router.get(
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+
+      // Get total collected (System wide)
+      const payments = await Payment.aggregate([
+        { $match: { status: { $ne: "reversed" } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]);
+      const totalCollected = payments[0]?.total || 0;
 
       // Get all remaining installments (plans with pending installments)
       const allPlans = await InstallmentPlan.find({
@@ -379,38 +404,21 @@ router.get(
       const lightGray = '#f3f4f6';
       const borderGray = '#e5e7eb';
 
-      // Helper function to convert hex to RGB
-      const hexToRgb = (hex: string): [number, number, number] => {
-        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        return result
-          ? [
-              parseInt(result[1], 16) / 255,
-              parseInt(result[2], 16) / 255,
-              parseInt(result[3], 16) / 255,
-            ]
-          : [0, 0, 0];
-      };
-      
-      const [borderGrayR, borderGrayG, borderGrayB] = hexToRgb(borderGray);
-
       // Helper function to draw colored box
       const drawColoredBox = (x: number, y: number, width: number, height: number, hexColor: string) => {
-        const [r, g, b] = hexToRgb(hexColor);
-        doc.rect(x, y, width, height).fillColor([r, g, b]).fill();
+        doc.rect(x, y, width, height).fillColor(hexColor).fill();
       };
 
       // Helper function to draw rounded rectangle
       const drawRoundedRect = (x: number, y: number, width: number, height: number, radius: number, hexColor: string) => {
-        const [r, g, b] = hexToRgb(hexColor);
-        doc.roundedRect(x, y, width, height, radius).fillColor([r, g, b]).fill();
+        doc.roundedRect(x, y, width, height, radius).fillColor(hexColor).fill();
       };
 
       // Header with colored background
       const headerHeight = 80;
       drawColoredBox(0, 0, doc.page.width, headerHeight, primaryColor);
       
-      const [whiteR, whiteG, whiteB] = hexToRgb('#ffffff');
-      doc.fillColor([whiteR, whiteG, whiteB])
+      doc.fillColor('#ffffff')
          .fontSize(24)
          .font('Helvetica-Bold')
          .text("Installment Management Report", 50, 30, { align: "center", width: doc.page.width - 100 });
@@ -419,54 +427,59 @@ router.get(
          .font('Helvetica')
          .text(`Generated on: ${new Date().toLocaleString()}`, 50, 60, { align: "center", width: doc.page.width - 100 });
       
-      doc.fillColor([0, 0, 0]); // Reset to black
+      doc.fillColor('black'); // Reset to black
       let yPos = headerHeight + 30;
 
-      // User Cash Balance Section with colored box
-      const cashBoxHeight = 90;
-      const cashBoxY = yPos;
-      
-      // Draw light green background box
-      drawRoundedRect(50, cashBoxY, doc.page.width - 100, cashBoxHeight, 8, '#ecfdf5');
-      
-      // Border
-      const [successR, successG, successB] = hexToRgb(successColor);
-      doc.save();
-      doc.roundedRect(50, cashBoxY, doc.page.width - 100, cashBoxHeight, 8)
-         .lineWidth(2)
-         .strokeColor([successR, successG, successB])
-         .stroke();
-      doc.restore();
-      
-      const [darkGrayR, darkGrayG, darkGrayB] = hexToRgb(darkGray);
-      doc.fillColor([darkGrayR, darkGrayG, darkGrayB])
+      // Financial Overview Section
+      doc.fillColor(darkGray)
          .fontSize(18)
          .font('Helvetica-Bold')
-         .text("Cash in Hand", 70, cashBoxY + 15);
+         .text("Financial Overview", 50, yPos);
       
-      const [grayR, grayG, grayB] = hexToRgb('#374151');
-      doc.fontSize(12)
-         .font('Helvetica')
-         .fillColor([grayR, grayG, grayB])
-         .text(`User: ${user.name}`, 70, cashBoxY + 40, { width: 200 });
-      doc.text(`Email: ${user.email}`, 70, cashBoxY + 55, { width: 200 });
+      yPos += 25;
+
+      // Draw 4 cards for overview
+      const cardWidth = (doc.page.width - 100 - 30) / 2; // 2 columns
+      const cardHeight = 80;
       
-      doc.fontSize(16)
-         .font('Helvetica-Bold')
-         .fillColor([successR, successG, successB])
-         .text(
-           `Cash Balance: PKR ${user.cashBalance?.toLocaleString() || "0.00"}`,
-           300,
-           cashBoxY + 40,
-           { width: 200 }
-         );
+      // Card 1: Cash in Hand (User)
+      drawRoundedRect(50, yPos, cardWidth, cardHeight, 8, '#ecfdf5'); // Green bg
+      doc.roundedRect(50, yPos, cardWidth, cardHeight, 8).lineWidth(1).strokeColor(successColor).stroke();
       
-      doc.fillColor([0, 0, 0]); // Reset
-      yPos = cashBoxY + cashBoxHeight + 25;
+      doc.fillColor(darkGray).fontSize(10).text("My Cash Balance", 65, yPos + 15);
+      doc.fillColor(successColor).fontSize(16).font('Helvetica-Bold').text(`PKR ${user.cashBalance?.toLocaleString() || "0"}`, 65, yPos + 35);
+
+      // Card 2: Total Collected (System)
+      drawRoundedRect(50 + cardWidth + 30, yPos, cardWidth, cardHeight, 8, '#eff6ff'); // Blue bg
+      doc.roundedRect(50 + cardWidth + 30, yPos, cardWidth, cardHeight, 8).lineWidth(1).strokeColor(primaryColor).stroke();
+      
+      doc.fillColor(darkGray).fontSize(10).font('Helvetica-Bold').text("Total Collected (System)", 65 + cardWidth + 30, yPos + 15);
+      doc.fillColor(primaryColor).fontSize(16).font('Helvetica-Bold').text(`PKR ${totalCollected.toLocaleString()}`, 65 + cardWidth + 30, yPos + 35);
+
+      yPos += cardHeight + 20;
+
+      // Card 3: Total Expenses
+      drawRoundedRect(50, yPos, cardWidth, cardHeight, 8, '#fef2f2'); // Red bg
+      doc.roundedRect(50, yPos, cardWidth, cardHeight, 8).lineWidth(1).strokeColor(dangerColor).stroke();
+      
+      doc.fillColor(darkGray).fontSize(10).font('Helvetica-Bold').text("Total Expenses", 65, yPos + 15);
+      doc.fillColor(dangerColor).fontSize(16).font('Helvetica-Bold').text(`PKR ${totalExpenses.toLocaleString()}`, 65, yPos + 35);
+
+      // Card 4: Net Profit (Collected - Expenses)
+      const netProfit = totalCollected - totalExpenses;
+      const profitColor = netProfit >= 0 ? successColor : dangerColor;
+      const profitBg = netProfit >= 0 ? '#ecfdf5' : '#fef2f2';
+
+      drawRoundedRect(50 + cardWidth + 30, yPos, cardWidth, cardHeight, 8, profitBg);
+      doc.roundedRect(50 + cardWidth + 30, yPos, cardWidth, cardHeight, 8).lineWidth(1).strokeColor(profitColor).stroke();
+      
+      doc.fillColor(darkGray).fontSize(10).font('Helvetica-Bold').text("Net Profit", 65 + cardWidth + 30, yPos + 15);
+      doc.fillColor(profitColor).fontSize(16).font('Helvetica-Bold').text(`PKR ${netProfit.toLocaleString()}`, 65 + cardWidth + 30, yPos + 35);
+
+      yPos += cardHeight + 30;
 
       // Remaining Installments Section
-      const [primaryR, primaryG, primaryB] = hexToRgb(primaryColor);
-      doc.fillColor([primaryR, primaryG, primaryB])
+      doc.fillColor(primaryColor)
          .fontSize(18)
          .font('Helvetica-Bold')
          .text("Remaining Installments", 50, yPos);
@@ -474,7 +487,7 @@ router.get(
       yPos += 25;
 
       if (remainingInstallments.length === 0) {
-        doc.fillColor([grayR, grayG, grayB])
+        doc.fillColor('#374151')
            .fontSize(12)
            .font('Helvetica')
            .text("No remaining installments found.", 70, yPos);
@@ -485,38 +498,20 @@ router.get(
           0
         );
 
-        // Summary box
-        const summaryBoxY = yPos;
-        const summaryBoxHeight = 50;
-        drawRoundedRect(50, summaryBoxY, doc.page.width - 100, summaryBoxHeight, 8, '#eff6ff');
-        doc.roundedRect(50, summaryBoxY, doc.page.width - 100, summaryBoxHeight, 8)
-           .lineWidth(1.5)
-           .strokeColor([primaryR, primaryG, primaryB])
-           .stroke();
-
-        doc.fillColor([darkGrayR, darkGrayG, darkGrayB])
+        // Summary text
+        doc.fillColor(darkGray)
            .fontSize(12)
            .font('Helvetica-Bold')
-           .text(`Total Plans: ${remainingInstallments.length}`, 70, summaryBoxY + 10);
-        
-        doc.fillColor([primaryR, primaryG, primaryB])
-           .fontSize(14)
-           .font('Helvetica-Bold')
-           .text(
-             `Total Remaining: PKR ${totalRemaining.toLocaleString()}`,
-             300,
-             summaryBoxY + 8,
-             { width: 200 }
-           );
+           .text(`Total Plans: ${remainingInstallments.length} | Total Remaining: PKR ${totalRemaining.toLocaleString()}`, 50, yPos);
 
-        yPos = summaryBoxY + summaryBoxHeight + 20;
+        yPos += 20;
 
         // Table header with colored background
         const tableHeaderY = yPos;
         const headerHeight = 25;
         drawRoundedRect(50, tableHeaderY, doc.page.width - 100, headerHeight, 4, primaryColor);
         
-        doc.fillColor([whiteR, whiteG, whiteB])
+        doc.fillColor('#ffffff')
            .fontSize(10)
            .font('Helvetica-Bold')
            .text("ID", 60, tableHeaderY + 7);
@@ -527,7 +522,7 @@ router.get(
         doc.text("Next Due", 500, tableHeaderY + 7);
 
         yPos = tableHeaderY + headerHeight + 5;
-        doc.fillColor([0, 0, 0]); // Reset to black
+        doc.fillColor('black'); // Reset to black
 
         // Table rows with alternating colors
         remainingInstallments.forEach((plan, index) => {
@@ -538,7 +533,7 @@ router.get(
             // Redraw header on new page
             const newHeaderY = yPos;
             drawRoundedRect(50, newHeaderY, doc.page.width - 100, headerHeight, 4, primaryColor);
-            doc.fillColor([whiteR, whiteG, whiteB])
+            doc.fillColor('#ffffff')
                .fontSize(10)
                .font('Helvetica-Bold')
                .text("ID", 60, newHeaderY + 7);
@@ -548,18 +543,17 @@ router.get(
             doc.text("Count", 450, newHeaderY + 7);
             doc.text("Next Due", 500, newHeaderY + 7);
             yPos = newHeaderY + headerHeight + 5;
-            doc.fillColor([0, 0, 0]);
+            doc.fillColor('black');
           }
 
           // Alternate row colors
           if (index % 2 === 0) {
-            const [lightGrayR, lightGrayG, lightGrayB] = hexToRgb(lightGray);
             doc.rect(50, yPos - 5, doc.page.width - 100, 18)
-               .fillColor([lightGrayR, lightGrayG, lightGrayB])
+               .fillColor(lightGray)
                .fill();
           }
 
-          doc.fillColor([0, 0, 0])
+          doc.fillColor('black')
              .fontSize(9)
              .font('Helvetica')
              .text(plan.installmentId || "N/A", 60, yPos);
@@ -574,12 +568,11 @@ router.get(
             ellipsis: true,
           });
           
-          const [warningR, warningG, warningB] = hexToRgb(warningColor);
-          doc.fillColor([warningR, warningG, warningB])
+          doc.fillColor(warningColor)
              .font('Helvetica-Bold')
              .text(`PKR ${plan.totalRemaining.toLocaleString()}`, 350, yPos);
           
-          doc.fillColor([0, 0, 0])
+          doc.fillColor('black')
              .font('Helvetica')
              .text(String(plan.remainingCount), 450, yPos);
           
@@ -590,15 +583,14 @@ router.get(
             dueDate.setHours(0, 0, 0, 0);
             
             if (dueDate < today) {
-              const [dangerR, dangerG, dangerB] = hexToRgb(dangerColor);
-              doc.fillColor([dangerR, dangerG, dangerB]); // Red for overdue
+              doc.fillColor(dangerColor); // Red for overdue
             } else {
-              doc.fillColor([grayR, grayG, grayB]); // Gray for future dates
+              doc.fillColor('#374151'); // Gray for future dates
             }
             
             doc.text(dueDate.toLocaleDateString(), 500, yPos);
           } else {
-            doc.fillColor([grayR, grayG, grayB])
+            doc.fillColor('#374151')
                .text("N/A", 500, yPos);
           }
 
@@ -616,39 +608,12 @@ router.get(
       }
 
       // Expenses Section
-      const [dangerR, dangerG, dangerB] = hexToRgb(dangerColor);
-      doc.fillColor([dangerR, dangerG, dangerB])
+      doc.fillColor(dangerColor)
          .fontSize(18)
          .font('Helvetica-Bold')
-         .text("Expenses", 50, yPos);
+         .text("Recent Expenses", 50, yPos);
       
       yPos += 25;
-
-      // Summary box for expenses
-      const expenseSummaryY = yPos;
-      const expenseSummaryHeight = 50;
-      drawRoundedRect(50, expenseSummaryY, doc.page.width - 100, expenseSummaryHeight, 8, '#fef2f2');
-      doc.roundedRect(50, expenseSummaryY, doc.page.width - 100, expenseSummaryHeight, 8)
-         .lineWidth(1.5)
-         .strokeColor([dangerR, dangerG, dangerB])
-         .stroke();
-
-      doc.fillColor([darkGrayR, darkGrayG, darkGrayB])
-         .fontSize(12)
-         .font('Helvetica-Bold')
-         .text(`Total Expense Records: ${expenses.length}`, 70, expenseSummaryY + 10);
-      
-      doc.fillColor([dangerR, dangerG, dangerB])
-         .fontSize(14)
-         .font('Helvetica-Bold')
-         .text(
-           `Total Expenses: PKR ${totalExpenses.toLocaleString()}`,
-           300,
-           expenseSummaryY + 8,
-           { width: 200 }
-         );
-
-      yPos = expenseSummaryY + expenseSummaryHeight + 20;
 
       if (expenses.length > 0) {
         // Expense table header with colored background
@@ -656,7 +621,7 @@ router.get(
         const expenseHeaderHeight = 25;
         drawRoundedRect(50, expenseHeaderY, doc.page.width - 100, expenseHeaderHeight, 4, dangerColor);
         
-        doc.fillColor([whiteR, whiteG, whiteB])
+        doc.fillColor('#ffffff')
            .fontSize(10)
            .font('Helvetica-Bold')
            .text("Date", 60, expenseHeaderY + 7);
@@ -666,7 +631,7 @@ router.get(
         doc.text("User", 450, expenseHeaderY + 7);
 
         yPos = expenseHeaderY + expenseHeaderHeight + 5;
-        doc.fillColor([0, 0, 0]); // Reset to black
+        doc.fillColor('black'); // Reset to black
 
         // Show last 50 expenses to avoid PDF being too large
         const expensesToShow = expenses.slice(0, 50);
@@ -677,7 +642,7 @@ router.get(
             // Redraw header on new page
             const newExpenseHeaderY = yPos;
             drawRoundedRect(50, newExpenseHeaderY, doc.page.width - 100, expenseHeaderHeight, 4, dangerColor);
-            doc.fillColor([whiteR, whiteG, whiteB])
+            doc.fillColor('#ffffff')
                .fontSize(10)
                .font('Helvetica-Bold')
                .text("Date", 60, newExpenseHeaderY + 7);
@@ -686,18 +651,17 @@ router.get(
             doc.text("Description", 320, newExpenseHeaderY + 7);
             doc.text("User", 450, newExpenseHeaderY + 7);
             yPos = newExpenseHeaderY + expenseHeaderHeight + 5;
-            doc.fillColor([0, 0, 0]);
+            doc.fillColor('black');
           }
 
           // Alternate row colors
           if (index % 2 === 0) {
-            const [lightGrayR, lightGrayG, lightGrayB] = hexToRgb(lightGray);
             doc.rect(50, yPos - 5, doc.page.width - 100, 18)
-               .fillColor([lightGrayR, lightGrayG, lightGrayB])
+               .fillColor(lightGray)
                .fill();
           }
 
-          doc.fillColor([0, 0, 0])
+          doc.fillColor('black')
              .fontSize(9)
              .font('Helvetica')
              .text(
@@ -721,16 +685,15 @@ router.get(
           };
           
           const categoryColor = categoryColors[exp.category] || '#6b7280';
-          const [catR, catG, catB] = hexToRgb(categoryColor);
-          doc.fillColor([catR, catG, catB])
+          doc.fillColor(categoryColor)
              .font('Helvetica-Bold')
              .text((exp.category || "N/A").replace('_', ' ').toUpperCase(), 120, yPos, { width: 130 });
           
-          doc.fillColor([dangerR, dangerG, dangerB])
+          doc.fillColor(dangerColor)
              .font('Helvetica-Bold')
              .text(`PKR ${(exp.amount || 0).toLocaleString()}`, 250, yPos);
           
-          doc.fillColor([0, 0, 0])
+          doc.fillColor('black')
              .font('Helvetica')
              .text((exp.description || "N/A").substring(0, 28), 320, yPos, {
                width: 130,
@@ -751,12 +714,12 @@ router.get(
         doc.moveTo(50, yPos - 5)
            .lineTo(doc.page.width - 50, yPos - 5)
            .lineWidth(1)
-           .strokeColor([borderGrayR, borderGrayG, borderGrayB])
+           .strokeColor(borderGray)
            .stroke();
 
         if (expenses.length > 50) {
           yPos += 10;
-          doc.fillColor([grayR, grayG, grayB])
+          doc.fillColor('#374151')
              .fontSize(9)
              .font('Helvetica-Oblique')
              .text(
@@ -769,12 +732,11 @@ router.get(
 
       // Footer with colored background
       const footerY = doc.page.height - 40;
-      const [lightGrayR, lightGrayG, lightGrayB] = hexToRgb(lightGray);
       doc.rect(0, footerY, doc.page.width, 40)
-         .fillColor([lightGrayR, lightGrayG, lightGrayB])
+         .fillColor(lightGray)
          .fill();
       
-      doc.fillColor([grayR, grayG, grayB])
+      doc.fillColor('#374151')
          .fontSize(9)
          .font('Helvetica')
          .text(
@@ -784,7 +746,7 @@ router.get(
            { align: "center", width: doc.page.width - 100 }
          );
       
-      doc.fillColor([primaryR, primaryG, primaryB])
+      doc.fillColor(primaryColor)
          .fontSize(8)
          .text(
            "Installment Management System",

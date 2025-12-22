@@ -131,7 +131,6 @@ installmentPlanSchema.pre("save", async function (next) {
 
 installmentPlanSchema.index({ customerId: 1 })
 installmentPlanSchema.index({ createdAt: -1 })
-installmentPlanSchema.index({ installmentId: 1 })
 installmentPlanSchema.index({ status: 1 })
 installmentPlanSchema.index({ productId: 1 })
 installmentPlanSchema.index({ "installmentSchedule.dueDate": 1 }) // For reports and overdue queries

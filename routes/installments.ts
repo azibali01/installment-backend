@@ -34,9 +34,21 @@ router.get(
     // Server-side search implementation
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), "i")
+      
+      // Find matching customers and products first
+      const [matchingCustomers, matchingProducts] = await Promise.all([
+        (await import("../models/Customer.js")).default.find({ name: searchRegex }).select("_id"),
+        Product.find({ name: searchRegex }).select("_id")
+      ])
+
+      const customerIds = matchingCustomers.map(c => c._id)
+      const productIds = matchingProducts.map(p => p._id)
+
       filter.$or = [
         { installmentId: searchRegex },
         { reference: searchRegex },
+        { customerId: { $in: customerIds } },
+        { productId: { $in: productIds } }
       ]
     }
 
@@ -58,18 +70,7 @@ router.get(
       .limit(limit)
       .lean() // Use lean for better performance
 
-    // If search is provided, also search in populated fields (client-side filtering for populated data)
-    let filteredData = installments
-    if (search && search.trim()) {
-      const searchLower = search.trim().toLowerCase()
-      filteredData = installments.filter((plan: any) => {
-        const customerName = plan.customerId?.name?.toLowerCase() || ""
-        const productName = plan.productId?.name?.toLowerCase() || ""
-        return customerName.includes(searchLower) || productName.includes(searchLower)
-      })
-    }
-
-    res.json({ data: filteredData, meta: { total: filteredData.length, page, limit, totalPages: Math.ceil(filteredData.length / limit) } })
+    res.json({ data: installments, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
   }),
 )
 

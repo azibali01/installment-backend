@@ -3,17 +3,15 @@ import { authenticate, authorizePermission } from "../middleware/auth.js"
 import Product from "../models/Product.js"
 import { body, param } from "express-validator"
 import { validateRequest } from "../middleware/validate.js"
+import { asyncHandler } from "../middleware/asyncHandler.js"
+import { NotFoundError } from "../utils/errors.js"
 
 const router = express.Router()
 
-router.get("/", authenticate, async (req: Request, res: Response) => {
-  try {
-    const products = await Product.find()
-    res.json(products)
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch products" })
-  }
-})
+router.get("/", authenticate, asyncHandler(async (req: Request, res: Response) => {
+  const products = await Product.find()
+  res.json(products)
+}))
 
 router.post(
   "/",
@@ -26,16 +24,12 @@ router.post(
     body("quantity").optional().isInt({ min: 0 }).withMessage("quantity must be >= 0"),
     validateRequest,
   ],
-  async (req: Request, res: Response) => {
-    try {
-      const { name, price, description, quantity } = req.body
-      const product = new Product({ name, price, description, quantity })
-      await product.save()
-      res.status(201).json(product)
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create product" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const { name, price, description, quantity } = req.body
+    const product = new Product({ name, price, description, quantity })
+    await product.save()
+    res.status(201).json(product)
+  }),
 )
 
 router.put(
@@ -43,29 +37,22 @@ router.put(
   authenticate,
   authorizePermission("manage_products"),
   [param("id").isMongoId().withMessage("Invalid product id"), validateRequest],
-  async (req: Request, res: Response) => {
-    try {
-      const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
-      res.json(product)
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update product" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
+    if (!product) throw new NotFoundError("Product")
+    res.json(product)
+  }),
 )
 
 router.get(
   "/:id",
   authenticate,
   [param("id").isMongoId().withMessage("Invalid product id"), validateRequest],
-  async (req: Request, res: Response) => {
-    try {
-      const product = await Product.findById(req.params.id)
-      if (!product) return res.status(404).json({ error: "Product not found" })
-      res.json(product)
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch product" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const product = await Product.findById(req.params.id)
+    if (!product) throw new NotFoundError("Product")
+    res.json(product)
+  }),
 )
 
 router.delete(
@@ -73,15 +60,11 @@ router.delete(
   authenticate,
   authorizePermission("manage_products"),
   [param("id").isMongoId().withMessage("Invalid product id"), validateRequest],
-  async (req: Request, res: Response) => {
-    try {
-      const product = await Product.findByIdAndDelete(req.params.id)
-      if (!product) return res.status(404).json({ error: "Product not found" })
-      res.json({ message: "Product deleted" })
-    } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete product" })
-    }
-  },
+  asyncHandler(async (req: Request, res: Response) => {
+    const product = await Product.findByIdAndDelete(req.params.id)
+    if (!product) throw new NotFoundError("Product")
+    res.json({ message: "Product deleted" })
+  }),
 )
 
 export default router
