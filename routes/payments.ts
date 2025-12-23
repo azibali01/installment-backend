@@ -158,7 +158,8 @@ router.post(
       notes: notes || undefined,
       breakdown: normalizedBreakdown,
       allocation: allocationResult?.appliedToMonths,
-      status: "completed",
+      // Payment model expects one of: 'recorded', 'reversed', 'failed'
+      status: "recorded",
     })
 
     // Save plan first
@@ -214,58 +215,60 @@ router.put(
     }
 
     const plan = await InstallmentPlan.findById(payment.installmentPlanId)
-    if (!plan) throw new NotFoundError("Installment plan")
-
     const oldAmount = Number(payment.amount || 0)
     const newAmount = typeof update.amount === "number" ? Number(update.amount) : oldAmount
     const newMonth = typeof update.installmentMonth === "number" ? Number(update.installmentMonth) : oldMonth
 
-    // 1. Revert old payment effect
-    const oldIdx = oldMonth - 1
-    if (plan.installmentSchedule[oldIdx]) {
-      const currentPaid = Number(plan.installmentSchedule[oldIdx].paidAmount || 0)
-      plan.installmentSchedule[oldIdx].paidAmount = Math.max(0, currentPaid - oldAmount)
-      
-      // Check if it should be pending again
-      const due = Number(plan.installmentSchedule[oldIdx].amount || 0)
-      if (Number(plan.installmentSchedule[oldIdx].paidAmount) + 0.001 < due) {
-        plan.installmentSchedule[oldIdx].status = "pending"
-        plan.installmentSchedule[oldIdx].paidDate = undefined
+    if (plan) {
+      // 1. Revert old payment effect
+      const oldIdx = oldMonth - 1
+      if (plan.installmentSchedule[oldIdx]) {
+        const currentPaid = Number(plan.installmentSchedule[oldIdx].paidAmount || 0)
+        plan.installmentSchedule[oldIdx].paidAmount = Math.max(0, currentPaid - oldAmount)
+        
+        // Check if it should be pending again
+        const due = Number(plan.installmentSchedule[oldIdx].amount || 0)
+        if (Number(plan.installmentSchedule[oldIdx].paidAmount) + 0.001 < due) {
+          plan.installmentSchedule[oldIdx].status = "pending"
+          plan.installmentSchedule[oldIdx].paidDate = undefined
+        }
       }
-    }
-    
-    // Revert balance
-    plan.remainingBalance = Number(plan.remainingBalance || 0) + oldAmount
+      
+      // Revert balance
+      plan.remainingBalance = Number(plan.remainingBalance || 0) + oldAmount
 
-    // 2. Apply new payment effect
-    const newIdx = newMonth - 1
-    if (!plan.installmentSchedule[newIdx]) {
-      throw new BadRequestError("Target installment month not found on plan")
-    }
+      // 2. Apply new payment effect
+      const newIdx = newMonth - 1
+      if (!plan.installmentSchedule[newIdx]) {
+        throw new BadRequestError("Target installment month not found on plan")
+      }
 
-    const newPaid = Number(plan.installmentSchedule[newIdx].paidAmount || 0) + newAmount
-    plan.installmentSchedule[newIdx].paidAmount = newPaid
-    
-    const newDue = Number(plan.installmentSchedule[newIdx].amount || 0)
-    if (newPaid + 0.001 >= newDue) {
-      plan.installmentSchedule[newIdx].status = "paid"
-      // Use new date or keep old date
-      plan.installmentSchedule[newIdx].paidDate = update.paymentDate ? new Date(update.paymentDate) : payment.paymentDate
-    }
+      const newPaid = Number(plan.installmentSchedule[newIdx].paidAmount || 0) + newAmount
+      plan.installmentSchedule[newIdx].paidAmount = newPaid
+      
+      const newDue = Number(plan.installmentSchedule[newIdx].amount || 0)
+      if (newPaid + 0.001 >= newDue) {
+        plan.installmentSchedule[newIdx].status = "paid"
+        // Use new date or keep old date
+        plan.installmentSchedule[newIdx].paidDate = update.paymentDate ? new Date(update.paymentDate) : payment.paymentDate
+      }
 
-    // Update balance
-    plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - newAmount)
+      // Update balance
+      plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - newAmount)
 
-    // Update plan status
-    if (plan.remainingBalance <= 10) {
-      plan.status = "completed"
+      // Update plan status
+      if (plan.remainingBalance <= 10) {
+        plan.status = "completed"
+      } else {
+        // If it was completed but now has balance, set back to active/approved
+        if (plan.status === "completed") plan.status = "approved"
+      }
+
+      // Save plan first (source of truth for balance)
+      await plan.save()
     } else {
-      // If it was completed but now has balance, set back to active/approved
-      if (plan.status === "completed") plan.status = "approved"
+      console.warn(`Installment plan ${String(payment.installmentPlanId)} not found while editing payment ${id}; skipping plan updates.`)
     }
-
-    // Save plan first (source of truth for balance)
-    await plan.save()
 
     // 3. Update payment record
     payment.amount = newAmount as any
@@ -565,30 +568,32 @@ router.delete(
     }
 
     const plan = await InstallmentPlan.findById(payment.installmentPlanId)
-    if (!plan) throw new NotFoundError("Installment plan")
-
-    // Revert payment effect
-    const idx = month - 1
-    if (plan.installmentSchedule[idx]) {
-      const currentPaid = Number(plan.installmentSchedule[idx].paidAmount || 0)
-      plan.installmentSchedule[idx].paidAmount = Math.max(0, currentPaid - Number(payment.amount || 0))
-      
-      const due = Number(plan.installmentSchedule[idx].amount || 0)
-      if (Number(plan.installmentSchedule[idx].paidAmount) + 0.001 < due) {
-        plan.installmentSchedule[idx].status = "pending"
-        plan.installmentSchedule[idx].paidDate = undefined
+    if (plan) {
+      // Revert payment effect
+      const idx = month - 1
+      if (plan.installmentSchedule[idx]) {
+        const currentPaid = Number(plan.installmentSchedule[idx].paidAmount || 0)
+        plan.installmentSchedule[idx].paidAmount = Math.max(0, currentPaid - Number(payment.amount || 0))
+        
+        const due = Number(plan.installmentSchedule[idx].amount || 0)
+        if (Number(plan.installmentSchedule[idx].paidAmount) + 0.001 < due) {
+          plan.installmentSchedule[idx].status = "pending"
+          plan.installmentSchedule[idx].paidDate = undefined
+        }
       }
+
+      plan.remainingBalance = Number(plan.remainingBalance || 0) + Number(payment.amount || 0)
+
+      // Update plan status
+      if (plan.remainingBalance > 10 && plan.status === "completed") {
+        plan.status = "approved"
+      }
+
+      // Save plan first
+      await plan.save()
+    } else {
+      console.warn(`Installment plan ${String(payment.installmentPlanId)} not found while deleting payment ${id}; skipping plan updates.`)
     }
-
-    plan.remainingBalance = Number(plan.remainingBalance || 0) + Number(payment.amount || 0)
-
-    // Update plan status
-    if (plan.remainingBalance > 10 && plan.status === "completed") {
-      plan.status = "approved"
-    }
-
-    // Save plan first
-    await plan.save()
 
     // Delete payment
     await Payment.deleteOne({ _id: id })
