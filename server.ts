@@ -38,21 +38,23 @@ getJwtSecret()
 const app = express()
 const PORT = process.env.PORT || 5000
 
-// Trust proxy - required for rate limiting behind reverse proxy (CapRover/nginx)
-// This allows express-rate-limit to correctly identify client IPs from X-Forwarded-For header
-app.set('trust proxy', true)
+// Trust proxy is configured dynamically below after environment detection.
+// We'll set it to true only when running behind a reverse proxy (production),
+// or when explicitly requested via the TRUST_PROXY env var. This avoids
+// permissive trust settings during local development which can break
+// express-rate-limit validation.
 
 const FRONTEND_URL = getFrontendUrl()
 const envList = process.env.FRONTEND_URLS || ""
 
 // Default localhost origins for development
 const defaultLocal = ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"]
-// Determine if we're in production: check NODE_ENV OR if FRONTEND_URLS is set (indicates deployment)
-const isProductionEnv = NODE_ENV === "production" || (envList.length > 0 && !envList.includes("localhost"))
+// Determine if we're in production: only when NODE_ENV === "production"
+const isProductionEnv = NODE_ENV === "production"
 // Combine environment URLs with localhost defaults
-// In production, only use envList; in dev, add localhost origins
+// In production, prefer explicit envList (or FRONTEND_URL); in development always include localhost defaults
 const combinedEnv = isProductionEnv
-  ? envList 
+  ? (envList || FRONTEND_URL)
   : [envList].filter(Boolean).concat(defaultLocal).join(',')
 
 const corsOptions = createCorsOptions(combinedEnv || FRONTEND_URL)
@@ -69,6 +71,12 @@ if (NODE_ENV !== "production") {
   })
 }
 
+// Configure trust proxy depending on environment
+// Enable only in production or when explicitly requested via TRUST_PROXY
+const useTrustProxy = NODE_ENV === "production" || process.env.TRUST_PROXY === "true"
+app.set("trust proxy", useTrustProxy)
+console.log(`${new Date().toISOString()} - trust proxy set to ${useTrustProxy}`)
+
 
 
 // Ensure CORS headers are added as early as possible so any middleware
@@ -81,8 +89,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     if (!origin) return next()
 
     // In development, if no explicit FRONTEND_URLS provided, echo any origin
-    // BUT: If FRONTEND_URLS is set (even if NODE_ENV is not production), use strict CORS
-    const isProductionEnv = NODE_ENV === "production" || (envList.length > 0 && !envList.includes("localhost"))
+    // Use production-only check strictly based on NODE_ENV so local dev still allows localhost even when FRONTEND_URLS is set
+    const isProductionEnv = NODE_ENV === "production"
     if (!isProductionEnv && (!process.env.FRONTEND_URL && !process.env.FRONTEND_URLS)) {
       res.header("Access-Control-Allow-Origin", origin)
       res.header("Access-Control-Allow-Credentials", "true")

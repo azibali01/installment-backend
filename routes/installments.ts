@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from "express"
+import mongoose from "mongoose"
 import { authenticate, authorizePermission } from "../middleware/auth.js"
 import InstallmentPlan from "../models/InstallmentPlan.js"
 import Product from "../models/Product.js"
@@ -249,18 +250,22 @@ router.put(
   authorizePermission("manage_installments"),
   [param("id").isMongoId().withMessage("Invalid installment id"), validateRequest],
   asyncHandler(async (req: Request, res: Response) => {
-    const update = req.body as any
-
-    const planDoc = await InstallmentPlan.findById(req.params.id)
-    if (!planDoc) throw new NotFoundError("Installment plan")
-
+    // REMOVE TRANSACTION: Not needed for single-document update, and causes error on standalone MongoDB
+    // const session = await mongoose.startSession()
+    // session.startTransaction()
+    try {
+      const update = req.body as any
+      const planDoc = await InstallmentPlan.findById(req.params.id)
+      if (!planDoc) {
+        throw new NotFoundError("Installment plan")
+      }
       const markupPercent = update.markupPercent !== undefined ? Number(update.markupPercent) : Number(planDoc.markupPercent || 40)
       const downPayment = update.downPayment !== undefined ? Number(update.downPayment) : Number(planDoc.downPayment)
       const numberOfMonths = update.numberOfMonths !== undefined ? Number(update.numberOfMonths) : Number(planDoc.numberOfMonths)
       const startDate = update.startDate ? new Date(update.startDate) : new Date(planDoc.startDate)
       const roundingPolicy = update.roundingPolicy || planDoc.roundingPolicy || "nearest"
       const interestModel = update.interestModel || planDoc.interestModel || "amortized"
-
+      
       const productIdToUse = update.productId !== undefined ? update.productId : (typeof planDoc.productId === "string" ? planDoc.productId : planDoc.productId?._id)
       const prod = productIdToUse ? await Product.findById(productIdToUse) : null
       // If product not found, calculate basePrice backwards from existing totalAmount to avoid double markup
@@ -275,7 +280,7 @@ router.put(
       }
       const totalAmount = Number(basePrice) + (Number(basePrice) * Number(markupPercent) / 100)
       const remainingBalance = totalAmount - downPayment
-
+      
       const serverSchedule = generateSchedule(
         remainingBalance,
         markupPercent,
@@ -284,7 +289,7 @@ router.put(
         (roundingPolicy as any) || "nearest",
         (interestModel as any) || "equal",
       )
-
+      
       if (Array.isArray(update.installmentSchedule) && update.installmentSchedule.length) {
         const clientSchedule = update.installmentSchedule
         const mismatch = clientSchedule.length !== serverSchedule.length || clientSchedule.some((cs: any, idx: number) => {
@@ -294,7 +299,7 @@ router.put(
         })
         if (mismatch) return res.status(400).json({ error: "Provided installment schedule does not match server calculation" })
       }
-
+      
       // Handle guarantors - if reference is provided, guarantors are optional
       let processedGuarantors: any[] | undefined = undefined
       const hasReference = update.reference && String(update.reference).trim()
@@ -325,7 +330,7 @@ router.put(
       if (hasReference && (!processedGuarantors || processedGuarantors.length === 0)) {
         processedGuarantors = undefined
       }
-
+      
       const finalUpdate: any = {
         ...update,
         totalAmount,
@@ -341,7 +346,7 @@ router.put(
         interestModel,
         reference: update.reference && String(update.reference).trim() ? String(update.reference).trim() : undefined,
       }
-
+      
       // Handle guarantors - if reference is provided and no guarantors, set to undefined
       if (hasReference && (!processedGuarantors || processedGuarantors.length === 0)) {
         finalUpdate.guarantors = undefined
@@ -355,10 +360,16 @@ router.put(
       } else if (update.bankCheque && Object.keys(update.bankCheque).some(key => update.bankCheque[key])) {
         finalUpdate.bankCheque = update.bankCheque
       }
-
-    const updated = await InstallmentPlan.findByIdAndUpdate(req.params.id, finalUpdate, { new: true })
-    if (!updated) throw new NotFoundError("Installment plan")
-    res.json(updated)
+      
+      const updated = await InstallmentPlan.findByIdAndUpdate(req.params.id, finalUpdate, { new: true })
+      if (!updated) {
+        throw new NotFoundError("Installment plan")
+      }
+      res.json(updated)
+    } catch (error) {
+      // No session to abort, just throw
+      throw error
+    }
   }),
 )
 

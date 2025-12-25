@@ -48,6 +48,7 @@ router.post(
   },
 )
 
+// Only admin can update user info (including password)
 router.put(
   "/:id",
   authenticate,
@@ -59,22 +60,30 @@ router.put(
     body("role").optional().isIn(["admin", "manager", "employee"]),
     body("phone").optional().matches(/^(\+?\d{1,3}[- ]?)?\d{9,12}$/).withMessage("phone must be a valid phone number"),
     body("salary").optional().isFloat({ min: 0 }),
+    body("password").optional().isLength({ min: 6 }).withMessage("password must be at least 6 characters"),
     validateRequest,
   ],
   async (req: Request, res: Response) => {
     try {
-      const { name, email, role, phone, salary, isActive } = req.body
-      const user = await User.findByIdAndUpdate(
-        req.params.id,
-        { name, email, role, phone, salary, isActive },
-        { new: true },
-      )
-      res.json(user)
+      const { name, email, role, phone, salary, isActive, password } = req.body;
+      const update: any = { };
+      if (name !== undefined) update.name = name;
+      if (email !== undefined) update.email = email;
+      if (role !== undefined) update.role = role;
+      if (phone !== undefined) update.phone = phone;
+      if (salary !== undefined) update.salary = salary;
+      if (isActive !== undefined) update.isActive = isActive;
+      if (password !== undefined) update.password = password;
+      const user = await User.findById(req.params.id);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      Object.assign(user, update);
+      await user.save();
+      res.json(user);
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update user" })
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update user" });
     }
   },
-)
+);
 
 router.delete(
   "/:id",

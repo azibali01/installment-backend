@@ -4,6 +4,7 @@ import InstallmentRequest from "../models/InstallmentRequest.js"
 import InstallmentPlan from "../models/InstallmentPlan.js"
 import { body, param, query } from "express-validator"
 import { validateRequest } from "../middleware/validate.js"
+import mongoose from "mongoose"
 
 const router = express.Router()
 
@@ -93,24 +94,31 @@ router.put(
     authorizePermission("manage_installments"),
     [param("id").isMongoId().withMessage("Invalid request id"), validateRequest],
     async (req: Request, res: Response) => {
+        const session = await mongoose.startSession()
+        session.startTransaction()
         try {
-            const r = await InstallmentRequest.findById(req.params.id)
-            if (!r) return res.status(404).json({ error: "Request not found" })
-            if (r.status !== "pending") return res.status(400).json({ error: "Request not pending" })
-
-            if (r.type === "edit") {
-                await InstallmentPlan.findByIdAndUpdate(r.installmentId, r.changes || {}, { new: true })
-            } else if (r.type === "delete") {
-                await InstallmentPlan.findByIdAndDelete(r.installmentId)
+            const r = await InstallmentRequest.findById(req.params.id).session(session)
+            if (!r) {
+                await session.abortTransaction(); session.endSession();
+                return res.status(404).json({ error: "Request not found" })
             }
-
+            if (r.status !== "pending") {
+                await session.abortTransaction(); session.endSession();
+                return res.status(400).json({ error: "Request not pending" })
+            }
+            if (r.type === "edit") {
+                await InstallmentPlan.findByIdAndUpdate(r.installmentId, r.changes || {}, { new: true, session })
+            } else if (r.type === "delete") {
+                await InstallmentPlan.findByIdAndDelete(r.installmentId, { session })
+            }
             r.status = "approved"
             r.reviewedBy = req.user?.id as any
             r.reviewedAt = new Date()
-            await r.save()
-
+            await r.save({ session })
+            await session.commitTransaction(); session.endSession();
             res.json(r)
         } catch (error) {
+            await session.abortTransaction(); session.endSession();
             res.status(500).json({ error: error instanceof Error ? error.message : "Failed to approve request" })
         }
     },

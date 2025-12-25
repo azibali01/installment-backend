@@ -9,8 +9,19 @@ import { NotFoundError, ConflictError } from "../utils/errors.js"
 const router = express.Router()
 
 router.get("/", authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const customers = await Customer.find().sort({ customerId: 1 })
-  res.json(customers)
+  const page = Math.max(1, Number(req.query.page || 1))
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)))
+  const skip = (page - 1) * limit
+  const total = await Customer.countDocuments()
+  // Only select necessary fields for list view
+  const customers = await Customer.find()
+    .sort({ customerId: 1 })
+    .skip(skip)
+    .limit(limit)
+    .select("customerId name phone cnic address so cast")
+    .lean()
+  // Always return array in 'data', even if empty
+  res.json({ data: Array.isArray(customers) ? customers : [], meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
 }))
 
 router.get(

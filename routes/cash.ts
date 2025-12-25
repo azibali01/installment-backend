@@ -35,63 +35,48 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const { toUserId, amount, notes } = req.body
     const fromUserId = req.user?.id
-
     if (!fromUserId) throw new ForbiddenError("User not authenticated")
-
-    // Get sender and recipient
-    const fromUser = await User.findById(fromUserId)
-    const toUser = await User.findById(toUserId)
-
-    if (!fromUser) throw new NotFoundError("Sender user")
-    if (!toUser) throw new NotFoundError("Recipient user")
-    if (!toUser.isActive) throw new ValidationError("Recipient user is not active")
-
-    // Check if sender has enough balance
-    if (fromUser.cashBalance < amount) {
-      throw new ValidationError("Insufficient cash balance")
-    }
-
-    // Validate transfer rules based on roles
-    const fromRole = fromUser.role
-    const toRole = toUser.role
-
-    // Employee can only transfer to manager or admin
-    if (fromRole === "employee" && toRole !== "manager" && toRole !== "admin") {
-      throw new ForbiddenError("Employees can only transfer cash to managers or admins")
-    }
-
-    // Manager can only transfer to admin
-    if (fromRole === "manager" && toRole !== "admin") {
-      throw new ForbiddenError("Managers can only transfer cash to admins")
-    }
-
-    // Admin can transfer to anyone (no restriction)
-
-    // Perform transfer (non-transactional for standalone DB)
-    
-    // 1. Deduct from sender first (Atomic check-and-update)
-    const updatedFrom = await User.findOneAndUpdate(
-      { _id: fromUserId, cashBalance: { $gte: amount } },
-      { $inc: { cashBalance: -amount } },
-      { new: true }
-    ).select("cashBalance")
-
-    if (!updatedFrom) {
-      throw new ValidationError("Insufficient cash balance or transfer failed")
-    }
-
+    const session = await User.startSession()
+    session.startTransaction()
     try {
+      // Get sender and recipient
+      const fromUser = await User.findById(fromUserId).session(session)
+      const toUser = await User.findById(toUserId).session(session)
+      if (!fromUser) throw new NotFoundError("Sender user")
+      if (!toUser) throw new NotFoundError("Recipient user")
+      if (!toUser.isActive) throw new ValidationError("Recipient user is not active")
+      // Check if sender has enough balance
+      if (fromUser.cashBalance < amount) {
+        throw new ValidationError("Insufficient cash balance")
+      }
+      // Validate transfer rules based on roles
+      const fromRole = fromUser.role
+      const toRole = toUser.role
+      if (fromRole === "employee" && toRole !== "manager" && toRole !== "admin") {
+        throw new ForbiddenError("Employees can only transfer cash to managers or admins")
+      }
+      if (fromRole === "manager" && toRole !== "admin") {
+        throw new ForbiddenError("Managers can only transfer cash to admins")
+      }
+      // Admin can transfer to anyone (no restriction)
+      // 1. Deduct from sender
+      const updatedFrom = await User.findOneAndUpdate(
+        { _id: fromUserId, cashBalance: { $gte: amount } },
+        { $inc: { cashBalance: -amount } },
+        { new: true, session }
+      ).select("cashBalance")
+      if (!updatedFrom) {
+        throw new ValidationError("Insufficient cash balance or transfer failed")
+      }
       // 2. Add to recipient
       const updatedTo = await User.findByIdAndUpdate(
-        toUserId, 
+        toUserId,
         { $inc: { cashBalance: amount } },
-        { new: true }
+        { new: true, session }
       ).select("cashBalance")
-
       if (!updatedTo) {
         throw new Error("Recipient not found during transfer")
       }
-
       // 3. Create transfer record
       const transfer = new CashTransfer({
         fromUser: fromUserId,
@@ -101,8 +86,9 @@ router.post(
         status: "completed",
         createdBy: fromUserId,
       })
-      await transfer.save()
-
+      await transfer.save({ session })
+      await session.commitTransaction()
+      session.endSession()
       res.status(201).json({
         message: "Cash transferred successfully",
         transfer: {
@@ -115,14 +101,8 @@ router.post(
         },
       })
     } catch (error) {
-      // Compensation: Refund sender if recipient update or log fails
-      console.error("Transfer failed mid-process, attempting refund...", error)
-      try {
-        await User.findByIdAndUpdate(fromUserId, { $inc: { cashBalance: amount } })
-        console.log("Refund successful for user", fromUserId)
-      } catch (refundError) {
-        console.error("CRITICAL: Refund failed for user", fromUserId, refundError)
-      }
+      await session.abortTransaction()
+      session.endSession()
       throw error
     }
   }),

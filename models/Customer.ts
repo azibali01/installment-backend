@@ -30,6 +30,8 @@ const customerSchema = new Schema<ICustomer>(
 // Add indexes for frequently queried fields
 customerSchema.index({ phone: 1 })
 customerSchema.index({ name: "text" }) // Text search index
+customerSchema.index({ customerId: 1 })
+customerSchema.index({ cnic: 1 })
 
 customerSchema.pre("save", async function (next) {
   if (this.isModified("cnic") && this.cnic) {

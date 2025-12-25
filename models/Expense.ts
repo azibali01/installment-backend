@@ -48,4 +48,9 @@ const expenseSchema = new Schema<IExpense>(
   { timestamps: true },
 )
 
+// Indexes for faster queries
+expenseSchema.index({ userId: 1, date: -1 })
+expenseSchema.index({ category: 1 })
+expenseSchema.index({ relatedUser: 1 })
+
 export default mongoose.model<IExpense>("Expense", expenseSchema)

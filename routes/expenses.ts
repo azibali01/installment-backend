@@ -10,8 +10,19 @@ const router = express.Router()
 
 router.get("/", authenticate, authorizePermission("view_expenses"), async (req: Request, res: Response) => {
   try {
-    const expenses = await Expense.find().populate("userId").populate("relatedUser")
-    res.json(expenses)
+    const page = Math.max(1, Number(req.query.page || 1))
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)))
+    const skip = (page - 1) * limit
+    const total = await Expense.countDocuments()
+    // Only select necessary fields for list view
+    const expenses = await Expense.find()
+      .select("category amount date description userId relatedUser createdAt")
+      .populate("userId", "name")
+      .populate("relatedUser", "name")
+      .skip(skip)
+      .limit(limit)
+      .lean()
+    res.json({ data: expenses, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch expenses" })
   }
@@ -43,20 +54,20 @@ router.post(
     validateRequest,
   ],
   async (req: Request, res: Response) => {
+    const session = await mongoose.startSession()
+    session.startTransaction()
     try {
       const { category, amount, date, description, relatedUser } = req.body
       const userId = req.user?.id
-
-      // Check if user has enough balance
-      const user = await User.findById(userId)
+      const user = await User.findById(userId).session(session)
       if (!user) {
+        await session.abortTransaction(); session.endSession();
         return res.status(404).json({ error: "User not found" })
       }
-
       if (user.cashBalance < Number(amount)) {
+        await session.abortTransaction(); session.endSession();
         return res.status(400).json({ error: "Insufficient cash balance" })
       }
-
       const expense = new Expense({
         category,
         amount: Number(amount),
@@ -65,14 +76,12 @@ router.post(
         userId,
         relatedUser,
       })
-
-      await expense.save()
-
-      // Deduct from user's cash balance
-      await User.findByIdAndUpdate(userId, { $inc: { cashBalance: -Number(amount) } })
-
+      await expense.save({ session })
+      await User.findByIdAndUpdate(userId, { $inc: { cashBalance: -Number(amount) } }, { session })
+      await session.commitTransaction(); session.endSession();
       res.status(201).json(expense)
     } catch (error) {
+      await session.abortTransaction(); session.endSession();
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create expense" })
     }
   },
@@ -84,19 +93,21 @@ router.delete(
   authorizePermission("manage_expenses"),
   [param("id").isMongoId().withMessage("Invalid expense id"), validateRequest],
   async (req: Request, res: Response) => {
+    const session = await mongoose.startSession()
+    session.startTransaction()
     try {
       const { id } = req.params
-
-      const expense = await Expense.findById(id)
-      if (!expense) return res.status(404).json({ error: "Expense not found" })
-
-      // Refund the amount to the user
-      await User.findByIdAndUpdate(expense.userId, { $inc: { cashBalance: expense.amount } })
-
-      await expense.deleteOne()
-
+      const expense = await Expense.findById(id).session(session)
+      if (!expense) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(404).json({ error: "Expense not found" })
+      }
+      await User.findByIdAndUpdate(expense.userId, { $inc: { cashBalance: expense.amount } }, { session })
+      await expense.deleteOne({ session })
+      await session.commitTransaction(); session.endSession();
       res.json({ success: true })
     } catch (error) {
+      await session.abortTransaction(); session.endSession();
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to delete expense" })
     }
   }
@@ -130,43 +141,42 @@ router.put(
     validateRequest,
   ],
   async (req: Request, res: Response) => {
+    const session = await mongoose.startSession()
+    session.startTransaction()
     try {
       const { id } = req.params
       const { category, amount, date, description, relatedUser } = req.body
-
-      const expense = await Expense.findById(id)
-      if (!expense) return res.status(404).json({ error: "Expense not found" })
-
+      const expense = await Expense.findById(id).session(session)
+      if (!expense) {
+        await session.abortTransaction(); session.endSession();
+        return res.status(404).json({ error: "Expense not found" })
+      }
       if (amount !== undefined) {
         const oldAmount = expense.amount
         const newAmount = Number(amount)
         const diff = newAmount - oldAmount
-
         if (diff !== 0) {
-          // Check if user has enough balance for the increase
           if (diff > 0) {
-            const user = await User.findById(expense.userId)
+            const user = await User.findById(expense.userId).session(session)
             if (!user || user.cashBalance < diff) {
+              await session.abortTransaction(); session.endSession();
               return res.status(400).json({ error: "Insufficient cash balance for update" })
             }
           }
-
-          // Adjust user balance
-          await User.findByIdAndUpdate(expense.userId, { $inc: { cashBalance: -diff } })
+          await User.findByIdAndUpdate(expense.userId, { $inc: { cashBalance: -diff } }, { session })
         }
       }
-
       const update: any = {}
       if (category !== undefined) update.category = category
       if (amount !== undefined) update.amount = Number(amount)
       if (date !== undefined) update.date = new Date(date)
       if (description !== undefined) update.description = description
       if (relatedUser !== undefined) update.relatedUser = relatedUser
-
-      const updated = await Expense.findByIdAndUpdate(id, update, { new: true })
-
+      const updated = await Expense.findByIdAndUpdate(id, update, { new: true, session })
+      await session.commitTransaction(); session.endSession();
       res.json(updated)
     } catch (error) {
+      await session.abortTransaction(); session.endSession();
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to update expense" })
     }
   },

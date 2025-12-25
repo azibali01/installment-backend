@@ -26,6 +26,11 @@ router.post(
   ],
   asyncHandler(async (req: Request, res: Response) => {
     const { name, price, description, quantity } = req.body
+    // Check for duplicate product name
+    const existingProduct = await Product.findOne({ name })
+    if (existingProduct) {
+      return res.status(409).json({ error: "Product with this name already exists." })
+    }
     const product = new Product({ name, price, description, quantity })
     await product.save()
     res.status(201).json(product)
