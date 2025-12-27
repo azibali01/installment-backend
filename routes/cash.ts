@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from "express"
+import mongoose from "mongoose"
 import { authenticate, authorizePermission } from "../middleware/auth.js"
 import User from "../models/User.js"
 import CashTransfer from "../models/CashTransfer.js"
@@ -36,12 +37,44 @@ router.post(
     const { toUserId, amount, notes } = req.body
     const fromUserId = req.user?.id
     if (!fromUserId) throw new ForbiddenError("User not authenticated")
-    const session = await User.startSession()
-    session.startTransaction()
+    // Detect whether server supports transactions (replica set / mongos)
+    let session: any = null
+    let usingTransaction = false
+    try {
+      const db = mongoose.connection?.db
+      if (db) {
+        const admin = db.admin()
+        // `hello` is preferred, fall back to `ismaster` for older servers
+        let helloRes: any
+        try {
+          helloRes = await admin.command({ hello: 1 })
+        } catch (e) {
+          helloRes = await admin.command({ ismaster: 1 })
+        }
+        if (helloRes && (helloRes.setName || helloRes.msg === "isdbgrid")) {
+          // replica set member or mongos
+          session = await User.startSession()
+          await session.startTransaction()
+          usingTransaction = true
+        }
+      } else {
+        // No DB handle yet (connection not ready) — fallback to non-transactional mode
+        usingTransaction = false
+      }
+    } catch (err: any) {
+      // Transactions not supported or failed to start; ensure session cleaned up
+      if (session) {
+        try {
+          await session.endSession()
+        } catch (e) {}
+      }
+      session = null
+      usingTransaction = false
+    }
     try {
       // Get sender and recipient
-      const fromUser = await User.findById(fromUserId).session(session)
-      const toUser = await User.findById(toUserId).session(session)
+      const fromUser = session ? await User.findById(fromUserId).session(session) : await User.findById(fromUserId)
+      const toUser = session ? await User.findById(toUserId).session(session) : await User.findById(toUserId)
       if (!fromUser) throw new NotFoundError("Sender user")
       if (!toUser) throw new NotFoundError("Recipient user")
       if (!toUser.isActive) throw new ValidationError("Recipient user is not active")
@@ -60,49 +93,88 @@ router.post(
       }
       // Admin can transfer to anyone (no restriction)
       // 1. Deduct from sender
-      const updatedFrom = await User.findOneAndUpdate(
-        { _id: fromUserId, cashBalance: { $gte: amount } },
-        { $inc: { cashBalance: -amount } },
-        { new: true, session }
-      ).select("cashBalance")
-      if (!updatedFrom) {
-        throw new ValidationError("Insufficient cash balance or transfer failed")
+      let updatedFrom: any = null
+      let updatedTo: any = null
+      let transfer: any = null
+      if (usingTransaction && session) {
+        updatedFrom = await User.findOneAndUpdate(
+          { _id: fromUserId, cashBalance: { $gte: amount } },
+          { $inc: { cashBalance: -amount } },
+          { new: true, session }
+        ).select("cashBalance")
+        if (!updatedFrom) {
+          throw new ValidationError("Insufficient cash balance or transfer failed")
+        }
+        // 2. Add to recipient
+        updatedTo = await User.findByIdAndUpdate(
+          toUserId,
+          { $inc: { cashBalance: amount } },
+          { new: true, session }
+        ).select("cashBalance")
+        if (!updatedTo) {
+          throw new Error("Recipient not found during transfer")
+        }
+        // 3. Create transfer record
+        transfer = new CashTransfer({
+          fromUser: fromUserId,
+          toUser: toUserId,
+          amount,
+          notes: notes || undefined,
+          status: "completed",
+          createdBy: fromUserId,
+        })
+        await transfer.save({ session })
+        await session.commitTransaction()
+        session.endSession()
+      } else {
+        // Non-transactional fallback: perform guarded updates and compensate on failure
+        updatedFrom = await User.findOneAndUpdate(
+          { _id: fromUserId, cashBalance: { $gte: amount } },
+          { $inc: { cashBalance: -amount } },
+          { new: true }
+        ).select("cashBalance")
+        if (!updatedFrom) {
+          throw new ValidationError("Insufficient cash balance or transfer failed")
+        }
+        // Add to recipient
+        updatedTo = await User.findByIdAndUpdate(
+          toUserId,
+          { $inc: { cashBalance: amount } },
+          { new: true }
+        ).select("cashBalance")
+        if (!updatedTo) {
+          // Compensate: refund sender
+          await User.findByIdAndUpdate(fromUserId, { $inc: { cashBalance: amount } })
+          throw new Error("Recipient not found during transfer")
+        }
+        transfer = new CashTransfer({
+          fromUser: fromUserId,
+          toUser: toUserId,
+          amount,
+          notes: notes || undefined,
+          status: "completed",
+          createdBy: fromUserId,
+        })
+        await transfer.save()
       }
-      // 2. Add to recipient
-      const updatedTo = await User.findByIdAndUpdate(
-        toUserId,
-        { $inc: { cashBalance: amount } },
-        { new: true, session }
-      ).select("cashBalance")
-      if (!updatedTo) {
-        throw new Error("Recipient not found during transfer")
-      }
-      // 3. Create transfer record
-      const transfer = new CashTransfer({
-        fromUser: fromUserId,
-        toUser: toUserId,
-        amount,
-        notes: notes || undefined,
-        status: "completed",
-        createdBy: fromUserId,
-      })
-      await transfer.save({ session })
-      await session.commitTransaction()
-      session.endSession()
       res.status(201).json({
         message: "Cash transferred successfully",
         transfer: {
-          id: transfer._id,
-          from: { id: fromUser._id, name: fromUser.name, balance: updatedFrom.cashBalance },
-          to: { id: toUser._id, name: toUser.name, balance: updatedTo.cashBalance },
+          id: transfer?._id,
+          from: { id: fromUser._id, name: fromUser.name, balance: updatedFrom?.cashBalance },
+          to: { id: toUser._id, name: toUser.name, balance: updatedTo?.cashBalance },
           amount,
-          notes: transfer.notes,
-          createdAt: transfer.createdAt,
+          notes: transfer?.notes,
+          createdAt: transfer?.createdAt,
         },
       })
     } catch (error) {
-      await session.abortTransaction()
-      session.endSession()
+      if (usingTransaction && session) {
+        try {
+          await session.abortTransaction()
+        } catch (e) {}
+        session.endSession()
+      }
       throw error
     }
   }),

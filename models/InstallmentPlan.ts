@@ -1,5 +1,7 @@
 import mongoose, { Schema, type Document } from "mongoose"
 import { getNextSequence } from "../utils/counters.js"
+import Payment from "./Payment.js"
+import User from "./User.js"
 
 export interface IInstallmentPlan extends Document {
   installmentId?: string
@@ -22,8 +24,7 @@ export interface IInstallmentPlan extends Document {
   roundingPolicy: "nearest" | "up" | "down"
   interestModel: "amortized" | "flat" | "equal"
   markupPercent?: number
-  status: "pending" | "approved" | "rejected" | "completed"
-  approvedBy?: mongoose.Types.ObjectId
+  // Removed status and approvedBy fields
   reference?: string
   guarantors?: Array<{
     name?: string
@@ -69,8 +70,7 @@ const installmentPlanSchema = new Schema<IInstallmentPlan>(
     roundingPolicy: { type: String, enum: ["nearest", "up", "down"], default: "nearest" },
     interestModel: { type: String, enum: ["amortized", "flat", "equal"], default: "equal" },
     endDate: { type: Date, required: true },
-    status: { type: String, enum: ["pending", "approved", "rejected", "completed"], default: "pending" },
-    approvedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    // Removed status and approvedBy fields
     reference: { type: String },
     guarantors: [
       {
@@ -131,8 +131,12 @@ installmentPlanSchema.pre("save", async function (next) {
 
 installmentPlanSchema.index({ customerId: 1 })
 installmentPlanSchema.index({ createdAt: -1 })
-installmentPlanSchema.index({ status: 1 })
+// Removed status index
 installmentPlanSchema.index({ productId: 1 })
 installmentPlanSchema.index({ "installmentSchedule.dueDate": 1 }) // For reports and overdue queries
+
+// Cascade-delete related payments when an InstallmentPlan is removed.
+// Handles both document `.remove()` and query-based deletions like `findOneAndDelete()`.
+// Cascade logic handled in the installments route to ensure transactional safety.
 
 export default mongoose.model<IInstallmentPlan>("InstallmentPlan", installmentPlanSchema)

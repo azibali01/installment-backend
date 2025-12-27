@@ -17,20 +17,20 @@ router.get(
   authenticate,
   [
     query("customerId").optional().isMongoId().withMessage("customerId must be a valid id"),
-    query("status").optional().isIn(["pending", "approved", "rejected", "completed"]).withMessage("Invalid status"),
+    // Removed status filter, approval/reject logic
     query("search").optional().isString().withMessage("search must be a string"),
     query("page").optional().isInt({ min: 1 }).withMessage("page must be >= 1"),
     query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100"),
     validateRequest,
   ],
   asyncHandler(async (req: Request, res: Response) => {
-    const { customerId, status, search } = req.query as { customerId?: string; status?: string; search?: string }
+    const { customerId, search } = req.query as { customerId?: string; search?: string }
     const page = Number.parseInt((req.query.page as string) || "1") || 1
     const limit = Number.parseInt((req.query.limit as string) || "20") || 20
 
     const filter: Record<string, any> = {}
     if (customerId) filter.customerId = customerId
-    if (status) filter.status = status
+    // Removed status filter
 
     // Server-side search implementation
     if (search && search.trim()) {
@@ -58,7 +58,7 @@ router.get(
     const query = InstallmentPlan.find(filter)
       .populate("customerId", "name phone")
       .populate("productId", "name price")
-      .populate("approvedBy", "name")
+      // Removed populate for approvedBy
     
     // Only exclude schedule if not explicitly requested
     if (!includeSchedule) {
@@ -197,8 +197,7 @@ router.post(
         }
       }
 
-      const creatorRole = req.user?.role
-      const autoApprove = creatorRole === "admin" || creatorRole === "manager"
+      // Approval logic removed
 
       let processedGuarantors: any[] | undefined = undefined
       if (Array.isArray(guarantors) && guarantors.length > 0) {
@@ -234,8 +233,6 @@ router.post(
         roundingPolicy: roundingPolicy || "nearest",
         interestModel: interestModel || "amortized",
         createdBy: req.user?.id,
-        status: autoApprove ? "approved" : "pending",
-        approvedBy: autoApprove ? req.user?.id : undefined,
         reference: reference || undefined,
       })
 
@@ -373,21 +370,7 @@ router.put(
   }),
 )
 
-router.put(
-  "/:id/approve",
-  authenticate,
-  authorizePermission("approve_installments"),
-  [param("id").isMongoId().withMessage("Invalid installment id"), validateRequest],
-  asyncHandler(async (req: Request, res: Response) => {
-    const plan = await InstallmentPlan.findByIdAndUpdate(
-      req.params.id,
-      { status: "approved", approvedBy: req.user?.id },
-      { new: true },
-    )
-    if (!plan) throw new NotFoundError("Installment plan")
-    res.json(plan)
-  }),
-)
+// Approval endpoint removed
 
 router.delete(
   "/:id",
@@ -395,9 +378,91 @@ router.delete(
   authorizePermission("manage_installments"),
   [param("id").isMongoId().withMessage("Invalid installment id"), validateRequest],
   asyncHandler(async (req: Request, res: Response) => {
-    const deleted = await InstallmentPlan.findByIdAndDelete(req.params.id)
-    if (!deleted) throw new NotFoundError("Installment plan")
-    res.json({ success: true })
+    // Attempt a transaction; if not available (standalone Mongo), fall back to guarded non-transactional flow.
+    let session: any = null
+    let usingTransaction = false
+    try {
+      const db = mongoose.connection?.db
+      if (db) {
+        const admin = db.admin()
+        let helloRes: any
+        try {
+          helloRes = await admin.command({ hello: 1 })
+        } catch (e) {
+          helloRes = await admin.command({ ismaster: 1 })
+        }
+        if (helloRes && (helloRes.setName || helloRes.msg === "isdbgrid")) {
+          session = await InstallmentPlan.startSession()
+          await session.startTransaction()
+          usingTransaction = true
+        }
+      } else {
+        usingTransaction = false
+      }
+    } catch (e: any) {
+      if (session) {
+        try { await session.endSession() } catch (er) {}
+      }
+      session = null
+      usingTransaction = false
+    }
+
+    try {
+      const plan = session ? await InstallmentPlan.findById(req.params.id).session(session) : await InstallmentPlan.findById(req.params.id)
+      if (!plan) throw new NotFoundError("Installment plan")
+
+      const Payment = (await import("../models/Payment.js")).default
+      // Find payments related to this plan (exclude reversed)
+      const paymentsQuery = Payment.find({ installmentPlanId: plan._id, status: { $ne: "reversed" } }).select("amount receivedBy").lean()
+      if (session) paymentsQuery.session(session)
+      const payments = await paymentsQuery
+
+      // Sum amounts per receivedBy user
+      const sums: Record<string, number> = {}
+      for (const p of payments) {
+        if (!p.receivedBy) continue
+        const id = String(p.receivedBy)
+        sums[id] = (sums[id] || 0) + (Number(p.amount) || 0)
+      }
+
+      const User = (await import("../models/User.js")).default
+      if (usingTransaction && session) {
+        for (const userId of Object.keys(sums)) {
+          await User.findByIdAndUpdate(userId, { $inc: { cashBalance: -Math.abs(sums[userId]) } }, { session })
+        }
+        await Payment.deleteMany({ installmentPlanId: plan._id }).session(session)
+        await InstallmentPlan.findByIdAndDelete(req.params.id).session(session)
+        await session.commitTransaction()
+        session.endSession()
+        res.json({ success: true })
+      } else {
+        // Non-transactional fallback: apply guarded updates and delete payments; if anything fails, attempt best-effort compensation
+        try {
+          for (const userId of Object.keys(sums)) {
+            await User.findByIdAndUpdate(userId, { $inc: { cashBalance: -Math.abs(sums[userId]) } })
+          }
+          await Payment.deleteMany({ installmentPlanId: plan._id })
+          await InstallmentPlan.findByIdAndDelete(req.params.id)
+          res.json({ success: true })
+        } catch (innerErr) {
+          // Attempt to revert user balance changes if possible (best-effort)
+          try {
+            for (const userId of Object.keys(sums)) {
+              await User.findByIdAndUpdate(userId, { $inc: { cashBalance: Math.abs(sums[userId]) } })
+            }
+          } catch (revertErr) {
+            // log and continue
+          }
+          throw innerErr
+        }
+      }
+    } catch (err) {
+      if (usingTransaction && session) {
+        try { await session.abortTransaction() } catch (e) {}
+        session.endSession()
+      }
+      throw err
+    }
   }),
 )
 

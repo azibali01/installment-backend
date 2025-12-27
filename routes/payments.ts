@@ -146,11 +146,8 @@ router.post(
           }
           plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - Number(amount))
         }
-        // Update plan status if fully paid
-        if (plan.remainingBalance <= 10) {
-          plan.status = "completed"
-        }
-        // Ensure breakdown is always provided (required by schema)
+        // Update plan as fully paid if needed (no status field)
+        // ...existing code...
         const breakdown = allocationResult?.breakdown || { principal: Number(amount), interest: 0, fees: 0 }
         const normalizedBreakdown = {
           principal: Number(breakdown.principal || amount),

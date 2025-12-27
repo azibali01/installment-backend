@@ -9,263 +9,38 @@ import PDFDocument from "pdfkit";
 
 const router = express.Router();
 
+
+// DEBUG ROUTE: Scan all InstallmentPlan documents for totalAmount issues
 router.get(
-  "/cash-flow",
-  authenticate,
-  authorizePermission("view_reports"),
-  async (req: Request, res: Response) => {
+  "/debug/scan-total-amounts",
+  async (req, res) => {
     try {
-      const { startDate, endDate } = req.query;
-
-      const query: any = {};
-      if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) query.createdAt.$gte = new Date(startDate as string);
-        if (endDate) query.createdAt.$lte = new Date(endDate as string);
-      }
-
-      const cashIn = await Payment.aggregate([
-        { $match: query },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]);
-
-      const cashOut = await Expense.aggregate([
-        { $match: query },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ]);
-
-      const totalCashIn = cashIn[0]?.total || 0;
-      const totalCashOut = cashOut[0]?.total || 0;
-
+      const plans = await InstallmentPlan.find({}, { installmentId: 1, totalAmount: 1 });
+      let sum = 0;
+      const issues: any[] = [];
+      const details: Array<{ installmentId: any; value: string | number; type: string; numericValue: number; valid: boolean }> = plans.map(plan => {
+        const value: string | number = plan.totalAmount;
+        const type = typeof value;
+        let numericValue: number = 0;
+        let valid = true;
+        if (typeof value === 'string') {
+          numericValue = Number((value as string).replace(/,/g, ''));
+          if (isNaN(numericValue)) valid = false;
+        } else if (typeof value === 'number') {
+          numericValue = value;
+        }
+        if (valid) sum += numericValue;
+        else issues.push({ installmentId: plan.installmentId, value, type });
+        return { installmentId: plan.installmentId, value, type, numericValue, valid };
+      });
       res.json({
-        totalCashIn,
-        totalCashOut,
-        profit: totalCashIn - totalCashOut,
+        totalPlans: plans.length,
+        sumOfValidTotalAmounts: sum,
+        issues,
+        details
       });
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to generate report",
-        });
-    }
-  }
-);
-
-router.get(
-  "/installment-status",
-  authenticate,
-  authorizePermission("view_reports"),
-  async (req: Request, res: Response) => {
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const overdue = await InstallmentPlan.find({
-        "installmentSchedule.dueDate": { $lt: today },
-        "installmentSchedule.status": "pending",
-      });
-
-      const duToday = await InstallmentPlan.find({
-        "installmentSchedule.dueDate": today,
-        "installmentSchedule.status": "pending",
-      });
-
-      const upcoming = await InstallmentPlan.find({
-        "installmentSchedule.dueDate": { $gt: today },
-        "installmentSchedule.status": "pending",
-      }).limit(10);
-
-      res.json({ overdue, duToday, upcoming });
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to generate report",
-        });
-    }
-  }
-);
-
-router.get(
-  "/dashboard",
-  authenticate,
-  authorizePermission("view_reports"),
-  async (req: Request, res: Response) => {
-    try {
-      const windowDays = Math.max(1, Number(req.query.windowDays || 7));
-
-      const now = new Date();
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(now);
-      endOfDay.setHours(23, 59, 59, 999);
-      const upcomingEnd = new Date(startOfDay);
-      upcomingEnd.setDate(upcomingEnd.getDate() + windowDays);
-      upcomingEnd.setHours(23, 59, 59, 999);
-
-      const baseUnwind: PipelineStage[] = [
-        { $match: { status: { $ne: "rejected" } } },
-        { $unwind: "$installmentSchedule" },
-        {
-          $addFields: {
-            "installmentSchedule.remaining": {
-              $subtract: [
-                "$installmentSchedule.amount",
-                { $ifNull: ["$installmentSchedule.paidAmount", 0] },
-              ],
-            },
-          },
-        },
-        { $match: { "installmentSchedule.remaining": { $gt: 0 } } },
-      ];
-
-      const makeCountPipeline = (dateMatch: any): PipelineStage[] => [
-        ...baseUnwind,
-        { $match: dateMatch },
-        {
-          $group: {
-            _id: null,
-            count: { $sum: 1 },
-            totalRemaining: { $sum: "$installmentSchedule.remaining" },
-          },
-        },
-      ];
-
-      const makeListPipeline = (
-        dateMatch: any,
-        limit = 10
-      ): PipelineStage[] => [
-        ...baseUnwind,
-        { $match: dateMatch },
-        {
-          $lookup: {
-            from: "customers",
-            localField: "customerId",
-            foreignField: "_id",
-            as: "customer",
-          },
-        },
-        { $unwind: { path: "$customer", preserveNullAndEmptyArrays: true } },
-        {
-          $project: {
-            planId: "$_id",
-            installment: "$installmentSchedule",
-            customer: {
-              _id: "$customer._id",
-              name: "$customer.name",
-              phone: "$customer.phone",
-            },
-            productId: 1,
-          },
-        },
-        { $sort: { "installment.dueDate": 1 } },
-        { $limit: limit },
-      ];
-
-      const [
-        todayAgg,
-        upcomingAgg,
-        overdueAgg,
-        todayList,
-        upcomingList,
-        overdueList,
-        cashInAgg,
-        cashOutAgg,
-        expectedRevenueAgg,
-        totalRemainingAgg,
-      ] = await Promise.all([
-        InstallmentPlan.aggregate(
-          makeCountPipeline({
-            "installmentSchedule.dueDate": { $gte: startOfDay, $lte: endOfDay },
-          })
-        ),
-        InstallmentPlan.aggregate(
-          makeCountPipeline({
-            "installmentSchedule.dueDate": { $gt: endOfDay, $lte: upcomingEnd },
-          })
-        ),
-        InstallmentPlan.aggregate(
-          makeCountPipeline({
-            "installmentSchedule.dueDate": { $lt: startOfDay },
-          })
-        ),
-        InstallmentPlan.aggregate(
-          makeListPipeline(
-            {
-              "installmentSchedule.dueDate": {
-                $gte: startOfDay,
-                $lte: endOfDay,
-              },
-            },
-            10
-          )
-        ),
-        InstallmentPlan.aggregate(
-          makeListPipeline(
-            {
-              "installmentSchedule.dueDate": {
-                $gt: endOfDay,
-                $lte: upcomingEnd,
-              },
-            },
-            10
-          )
-        ),
-        InstallmentPlan.aggregate(
-          makeListPipeline(
-            { "installmentSchedule.dueDate": { $lt: startOfDay } },
-            10
-          )
-        ),
-        Payment.aggregate([
-          { $match: { status: { $ne: "reversed" } } },
-          { $group: { _id: null, total: { $sum: "$amount" } } },
-        ]),
-        Expense.aggregate([
-          { $group: { _id: null, total: { $sum: "$amount" } } },
-        ]),
-        InstallmentPlan.aggregate([
-          { $match: { status: { $ne: "rejected" } } },
-          { $unwind: "$installmentSchedule" },
-          { $match: { "installmentSchedule.dueDate": { $lte: endOfDay } } },
-          { $group: { _id: null, total: { $sum: "$installmentSchedule.amount" } } }
-        ]),
-        InstallmentPlan.aggregate([
-          { $match: { status: { $ne: "rejected" } } },
-          { $group: { _id: null, total: { $sum: "$remainingBalance" } } }
-        ]),
-      ]);
-
-      const normalize = (arr: any[]) =>
-        arr[0]
-          ? { count: arr[0].count, totalRemaining: arr[0].totalRemaining }
-          : { count: 0, totalRemaining: 0 };
-
-      const totalCashIn = cashInAgg[0]?.total || 0;
-      const totalCashOut = cashOutAgg[0]?.total || 0;
-      const totalExpectedRevenue = expectedRevenueAgg[0]?.total || 0;
-      const totalRemainingRevenue = totalRemainingAgg[0]?.total || 0;
-
-      res.json({
-        today: normalize(todayAgg),
-        upcoming: normalize(upcomingAgg),
-        overdue: normalize(overdueAgg),
-        todayList,
-        upcomingList,
-        overdueList,
-        totalCashIn,
-        totalCashOut,
-        totalExpectedRevenue,
-        totalRemainingRevenue,
-      });
-    } catch (error) {
+      console.error('PERMANENT DEBUG: Error in /dashboard route:', error);
       res
         .status(500)
         .json({
@@ -274,6 +49,108 @@ router.get(
               ? error.message
               : "Failed to generate dashboard",
         });
+    }
+  }
+);
+
+// DASHBOARD ROUTE: Returns totalRevenue (sum of all InstallmentPlan totalAmount fields)
+router.get(
+  "/dashboard",
+  async (req, res) => {
+    try {
+      // totalRevenue (sum of totalAmount)
+      const plansForRevenue = await InstallmentPlan.find({}, { totalAmount: 1 });
+      let totalRevenue = 0;
+      for (const p of plansForRevenue) {
+        let v: any = p.totalAmount as any;
+        if (typeof v === "string") v = Number(String(v).replace(/,/g, ""));
+        if (typeof v === "number" && !isNaN(v)) totalRevenue += v;
+      }
+
+      // totalRemainingRevenue: sum of remainingBalance
+      const plansForRemaining = await InstallmentPlan.find({}, { remainingBalance: 1 });
+      const totalRemainingRevenue = plansForRemaining.reduce((acc: number, pl: any) => acc + (Number(pl.remainingBalance) || 0), 0);
+
+      // totalCashIn (sum of payments excluding reversed)
+      const paymentsAgg = await Payment.aggregate([
+        { $match: { status: { $ne: "reversed" } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]);
+      const totalCashIn = paymentsAgg[0]?.total || 0;
+
+      // totalCashOut (sum of expenses)
+      const expensesAgg = await Expense.aggregate([
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]);
+      const totalCashOut = expensesAgg[0]?.total || 0;
+
+      // Build today/upcoming/overdue lists by scanning installment schedules
+      const allPlans = await InstallmentPlan.find()
+        .populate("customerId", "name phone customerId")
+        .lean();
+
+      const todayList: any[] = [];
+      const upcomingList: any[] = [];
+      const overdueList: any[] = [];
+
+      const now = new Date();
+      const todayStart = new Date(now);
+      todayStart.setHours(0,0,0,0);
+      const todayEnd = new Date(now);
+      todayEnd.setHours(23,59,59,999);
+      const upcomingEnd = new Date(todayEnd);
+      upcomingEnd.setDate(upcomingEnd.getDate() + 7); // next 7 days
+
+      for (const plan of allPlans) {
+        const planId = plan.installmentId || (plan._id ? String(plan._id) : undefined);
+        const customer = plan.customerId && typeof plan.customerId === 'object' ? plan.customerId : { _id: plan.customerId };
+        const schedule = Array.isArray(plan.installmentSchedule) ? plan.installmentSchedule : [];
+        for (const item of schedule) {
+          const due = item?.dueDate ? new Date(item.dueDate) : null;
+          const amount = Number(item?.amount || 0);
+          const paidAmount = Number(item?.paidAmount || 0);
+          const remaining = Math.max(0, amount - paidAmount);
+          if (!due || remaining <= 0) continue;
+
+          const entry = {
+            planId: planId,
+            customer: customer,
+            installment: {
+              month: item.month,
+              dueDate: due?.toISOString(),
+              amount,
+              paidAmount,
+              remaining,
+            },
+          };
+
+          if (due >= todayStart && due <= todayEnd) {
+            todayList.push(entry);
+          } else if (due > todayEnd && due <= upcomingEnd) {
+            upcomingList.push(entry);
+          } else if (due < todayStart) {
+            overdueList.push(entry);
+          }
+        }
+      }
+
+      res.json({
+        totalRevenue,
+        totalRemainingRevenue,
+        totalCashIn,
+        totalCashOut,
+        today: { count: todayList.length },
+        upcoming: { count: upcomingList.length },
+        overdue: { count: overdueList.length },
+        todayList,
+        upcomingList,
+        overdueList,
+      });
+    } catch (error) {
+      console.error('PERMANENT DEBUG: Error in /dashboard route:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Failed to generate dashboard",
+      });
     }
   }
 );
@@ -360,6 +237,34 @@ router.get(
               : null,
         };
       });
+
+// DASHBOARD ROUTE: Returns totalRevenue (sum of all InstallmentPlan totalAmount fields)
+router.get(
+  "/dashboard",
+  async (req, res) => {
+    try {
+      const plans = await InstallmentPlan.find({}, { totalAmount: 1 });
+      let sum = 0;
+      for (const plan of plans) {
+        let value = plan.totalAmount;
+        if (typeof value === 'string') {
+          value = Number(value.replace(/,/g, ''));
+        }
+        if (typeof value === 'number' && !isNaN(value)) {
+          sum += value;
+        }
+      }
+      res.json({
+        totalRevenue: sum
+      });
+    } catch (error) {
+      console.error('PERMANENT DEBUG: Error in /dashboard route:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Failed to generate dashboard",
+      });
+    }
+  }
+);
 
       // Get all expenses
       const expenses = await Expense.find()
