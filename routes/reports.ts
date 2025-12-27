@@ -238,34 +238,6 @@ router.get(
         };
       });
 
-// DASHBOARD ROUTE: Returns totalRevenue (sum of all InstallmentPlan totalAmount fields)
-router.get(
-  "/dashboard",
-  async (req, res) => {
-    try {
-      const plans = await InstallmentPlan.find({}, { totalAmount: 1 });
-      let sum = 0;
-      for (const plan of plans) {
-        let value = plan.totalAmount;
-        if (typeof value === 'string') {
-          value = Number(value.replace(/,/g, ''));
-        }
-        if (typeof value === 'number' && !isNaN(value)) {
-          sum += value;
-        }
-      }
-      res.json({
-        totalRevenue: sum
-      });
-    } catch (error) {
-      console.error('PERMANENT DEBUG: Error in /dashboard route:', error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : "Failed to generate dashboard",
-      });
-    }
-  }
-);
-
       // Get all expenses
       const expenses = await Expense.find()
         .populate("userId", "name")
