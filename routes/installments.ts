@@ -92,7 +92,9 @@ router.get(
             });
           }
         }
-        return { ...plan, remaining };
+        // Convert Mongoose document to plain object and explicitly add remaining
+        const planObj = plan.toObject ? plan.toObject() : { ...plan };
+        return { ...planObj, remaining };
       })
     );
 
