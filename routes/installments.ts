@@ -79,6 +79,24 @@ router.get(
         if (plan.installmentSchedule && Array.isArray(plan.installmentSchedule)) {
           remaining = calculateRemainingBalance(plan.installmentSchedule);
           
+          // Debug logging for first few plans
+          if (installmentsRaw.indexOf(plan) < 3) {
+            const scheduleSummary = plan.installmentSchedule.reduce((acc: any, item: any) => {
+              const amt = Number(item.amount || 0);
+              const paid = Number(item.paidAmount || 0);
+              const status = item.status || 'pending';
+              if (status === 'paid' || paid >= amt) {
+                acc.paidCount++;
+                acc.paidTotal += amt;
+              } else {
+                acc.pendingCount++;
+                acc.pendingTotal += Math.max(0, amt - paid);
+              }
+              return acc;
+            }, { paidCount: 0, pendingCount: 0, paidTotal: 0, pendingTotal: 0 });
+            console.log(`[DEBUG] Plan ${plan.installmentId || plan._id}: remaining=${remaining}, schedule: ${scheduleSummary.pendingCount} pending (${scheduleSummary.pendingTotal.toFixed(2)}), ${scheduleSummary.paidCount} paid`);
+          }
+          
           // Fix database if remainingBalance is incorrect (for old plans)
           const currentBalance = Number(plan.remainingBalance || 0);
           if (Math.abs(remaining - currentBalance) > 0.01) {
