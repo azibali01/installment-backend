@@ -54,16 +54,14 @@ router.get(
     }
 
     const total = await InstallmentPlan.countDocuments(filter)
-    const includeSchedule = req.query.includeSchedule === "true"
+    // Always include schedule - needed for remaining balance calculation
     const query = InstallmentPlan.find(filter)
       .populate("customerId", "name phone")
       .populate("productId", "name price")
       // Removed populate for approvedBy
     
-    // Only exclude schedule if not explicitly requested
-    if (!includeSchedule) {
-      query.select("-installmentSchedule")
-    }
+    // Always include schedule - we need it to calculate remaining balance
+    // Don't exclude it even if includeSchedule is false
     
     const installmentsRaw = await query
       .sort({ createdAt: -1 })
