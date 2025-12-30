@@ -9,8 +9,21 @@ import { NotFoundError } from "../utils/errors.js"
 const router = express.Router()
 
 router.get("/", authenticate, asyncHandler(async (req: Request, res: Response) => {
+  const page = Math.max(1, Number(req.query.page || 1))
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)))
+  const skip = (page - 1) * limit
+  const total = await Product.countDocuments()
+  
   const products = await Product.find()
-  res.json(products)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean()
+  
+  res.json({ 
+    data: Array.isArray(products) ? products : [], 
+    meta: { total, page, limit, totalPages: Math.ceil(total / limit) } 
+  })
 }))
 
 router.post(
