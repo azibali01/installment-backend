@@ -126,6 +126,16 @@ router.get(
       })
     );
 
+    // Debug: Log response structure for first plan
+    if (installments.length > 0) {
+      console.log('[BACKEND RESPONSE] First plan in response:', {
+        id: installments[0]._id,
+        remaining: installments[0].remaining,
+        hasRemaining: 'remaining' in installments[0],
+        keys: Object.keys(installments[0]).filter(k => k.includes('remain'))
+      });
+    }
+    
     res.json({ data: installments, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
   }),
 )
