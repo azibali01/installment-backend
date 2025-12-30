@@ -127,4 +127,30 @@ export function allocatePaymentToSchedule(
     return allocation;
 }
 
-export default { amortizedMonthlyPayment, generateSchedule };
+/**
+ * Calculate remaining balance from installment schedule
+ * This is the source of truth for remaining balance calculation
+ * @param schedule - The installment schedule array
+ * @returns The total remaining balance (sum of unpaid amounts)
+ */
+export function calculateRemainingBalance(schedule: Array<{
+  amount?: number;
+  paidAmount?: number;
+  status?: string;
+}>): number {
+  if (!Array.isArray(schedule)) {
+    return 0;
+  }
+  
+  return schedule.reduce((sum, item) => {
+    const amt = Number(item.amount || 0);
+    const paid = Number(item.paidAmount || 0);
+    // Only count if not fully paid
+    if (item.status === 'pending' || paid < amt) {
+      return sum + Math.max(0, amt - paid);
+    }
+    return sum;
+  }, 0);
+}
+
+export default { amortizedMonthlyPayment, generateSchedule, calculateRemainingBalance };

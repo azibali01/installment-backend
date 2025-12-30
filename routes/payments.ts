@@ -5,7 +5,7 @@ import Payment from "../models/Payment.js"
 import InstallmentPlan from "../models/InstallmentPlan.js"
 import PaymentRequest from "../models/PaymentRequest.js"
 import User from "../models/User.js"
-import { allocatePaymentToSchedule } from "../utils/finance.js"
+import { allocatePaymentToSchedule, calculateRemainingBalance } from "../utils/finance.js"
 import { body, param } from "express-validator"
 import { validateRequest } from "../middleware/validate.js"
 import { asyncHandler } from "../middleware/asyncHandler.js"
@@ -114,7 +114,8 @@ router.post(
             entry.status = "paid"
             entry.paidDate = new Date(paymentDate)
           }
-          plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - Number(amount))
+          // Recalculate remainingBalance from schedule (source of truth)
+          plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule)
           // Calculate proper breakdown based on interest model
           const interestModel = (plan as any).interestModel || "equal"
           let breakdown: { principal: number; interest: number; fees: number }
@@ -144,7 +145,8 @@ router.post(
               entry.paidDate = new Date(paymentDate)
             }
           }
-          plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - Number(amount))
+          // Recalculate remainingBalance from schedule (source of truth)
+          plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule)
         }
         // Update plan as fully paid if needed (no status field)
         // ...existing code...
@@ -169,6 +171,8 @@ router.post(
           allocation: allocationResult?.appliedToMonths,
           status: "recorded",
         })
+        // Final sync: Recalculate remainingBalance from schedule before saving
+        plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule)
         await plan.save()
         await payment.save()
         await User.findByIdAndUpdate(receiverId, { $inc: { cashBalance: Number(amount) } })
@@ -213,7 +217,6 @@ router.put(
             plan.installmentSchedule[oldIdx].paidDate = undefined
           }
         }
-        plan.remainingBalance = Number(plan.remainingBalance || 0) + oldAmount
         // 2. Apply new payment effect
         const newIdx = newMonth - 1
         if (!plan.installmentSchedule[newIdx]) {
@@ -226,6 +229,8 @@ router.put(
           plan.installmentSchedule[newIdx].status = "paid"
           plan.installmentSchedule[newIdx].paidDate = update.paymentDate ? new Date(update.paymentDate) : payment.paymentDate
         }
+        // Recalculate remainingBalance from schedule (source of truth)
+        plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule)
       }
       payment.amount = newAmount
       payment.installmentMonth = newMonth
@@ -303,7 +308,8 @@ router.post(
                 }
               }
               
-              plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - (newAmount - oldAmount));
+              // Recalculate remainingBalance from schedule (source of truth)
+              plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule);
               await plan.save();
             }
           }
@@ -327,7 +333,8 @@ router.post(
                   plan.installmentSchedule[idx].paidDate = undefined;
                 }
               }
-              plan.remainingBalance = Number(plan.remainingBalance || 0) + Number(payment.amount || 0);
+              // Recalculate remainingBalance from schedule (source of truth)
+              plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule);
               await plan.save();
             }
           }
@@ -424,7 +431,8 @@ router.put(
               }
             }
 
-            plan.remainingBalance = Math.max(0, Number(plan.remainingBalance || 0) - (newAmount - oldAmount));
+            // Recalculate remainingBalance from schedule (source of truth)
+            plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule);
             await plan.save();
           }
         }
@@ -486,7 +494,8 @@ router.delete(
             plan.installmentSchedule[idx].paidDate = undefined
           }
         }
-        plan.remainingBalance = Number(plan.remainingBalance || 0) + Number(payment.amount || 0)
+            // Recalculate remainingBalance from schedule (source of truth)
+            plan.remainingBalance = calculateRemainingBalance(plan.installmentSchedule)
         await plan.save()
       }
     }
