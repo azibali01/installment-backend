@@ -15,8 +15,13 @@ import { calculateRemainingBalance } from "../utils/finance.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables
-dotenv.config({ path: path.resolve(__dirname, "../.env") });
+// Load environment variables (try both .env and env)
+const envPath = path.resolve(__dirname, "../.env");
+const envPathAlt = path.resolve(__dirname, "../env");
+dotenv.config({ path: envPath });
+if (!process.env.MONGODB_URI) {
+  dotenv.config({ path: envPathAlt });
+}
 
 async function fixRemainingBalances() {
   try {

@@ -6,6 +6,7 @@
     "dev": "nodemon --exec \"npx tsx\" server.ts",
     "seed:roles": "npx tsx ./scripts/seedRolePermissions.ts",
     "seed:users": "npx tsx ./seedUsers.ts",
+    "fix:balances": "npx tsx ./scripts/fixRemainingBalances.ts",
     "build": "tsc",
     "start": "node dist/server.js"
   },

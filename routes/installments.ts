@@ -71,22 +71,30 @@ router.get(
       .limit(limit)
       .lean()
 
-    // Always recalculate 'remaining' from schedule
-    const installments = installmentsRaw.map(plan => {
-      let remaining = 0;
-      if (plan.installmentSchedule && Array.isArray(plan.installmentSchedule)) {
-        remaining = plan.installmentSchedule.reduce((sum, item) => {
-          const amt = Number(item.amount || 0);
-          const paid = Number(item.paidAmount || 0);
-          // Only count if not fully paid
-          if ((item.status === 'pending' || paid < amt)) {
-            return sum + Math.max(0, amt - paid);
+    // Always recalculate 'remaining' from schedule and fix database if needed
+    const { calculateRemainingBalance } = await import("../utils/finance.js");
+    const installments = await Promise.all(
+      installmentsRaw.map(async (plan) => {
+        let remaining = 0;
+        if (plan.installmentSchedule && Array.isArray(plan.installmentSchedule)) {
+          remaining = calculateRemainingBalance(plan.installmentSchedule);
+          
+          // Fix database if remainingBalance is incorrect (for old plans)
+          const currentBalance = Number(plan.remainingBalance || 0);
+          if (Math.abs(remaining - currentBalance) > 0.01) {
+            // Update in background (don't wait for it)
+            InstallmentPlan.findByIdAndUpdate(
+              plan._id,
+              { remainingBalance: remaining },
+              { new: false }
+            ).catch((err) => {
+              console.error(`Failed to fix remainingBalance for plan ${plan._id}:`, err);
+            });
           }
-          return sum;
-        }, 0);
-      }
-      return { ...plan, remaining };
-    });
+        }
+        return { ...plan, remaining };
+      })
+    );
 
     res.json({ data: installments, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
   }),
