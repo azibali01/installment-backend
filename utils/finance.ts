@@ -130,8 +130,15 @@ export function allocatePaymentToSchedule(
 /**
  * Calculate remaining balance from installment schedule
  * This is the source of truth for remaining balance calculation
- * @param schedule - The installment schedule array
- * @returns The total remaining balance (sum of unpaid amounts)
+ * 
+ * IMPORTANT: This calculates ONLY unpaid installments from the schedule.
+ * Down payment is NOT included because:
+ * 1. Down payment is paid upfront when plan is created
+ * 2. Schedule is generated from (totalAmount - downPayment) = principal
+ * 3. So schedule amounts already exclude down payment
+ * 
+ * @param schedule - The installment schedule array (generated from principal, excluding down payment)
+ * @returns The total remaining balance (sum of unpaid installment amounts only)
  */
 export function calculateRemainingBalance(schedule: Array<{
   amount?: number;
@@ -142,6 +149,8 @@ export function calculateRemainingBalance(schedule: Array<{
     return 0;
   }
   
+  // Sum only unpaid installments from schedule
+  // Schedule is generated from (totalAmount - downPayment), so down payment is already excluded
   return schedule.reduce((sum, item) => {
     const amt = Number(item.amount || 0);
     const paid = Number(item.paidAmount || 0);

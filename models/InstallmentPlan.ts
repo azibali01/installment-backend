@@ -127,6 +127,14 @@ installmentPlanSchema.pre("save", async function (next) {
       }
     }
   }
+  
+  // Always recalculate remainingBalance from schedule before saving
+  // IMPORTANT: This ensures remainingBalance = unpaid installments only (excludes down payment)
+  // Down payment is already paid upfront, so it's NOT included in remaining balance
+  if (this.installmentSchedule && Array.isArray(this.installmentSchedule)) {
+    this.remainingBalance = calculateRemainingBalance(this.installmentSchedule)
+  }
+  
   next()
 })
 
