@@ -20,7 +20,7 @@ router.get(
     // Removed status filter, approval/reject logic
     query("search").optional().isString().withMessage("search must be a string"),
     query("page").optional().isInt({ min: 1 }).withMessage("page must be >= 1"),
-    query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100"),
+    query("limit").optional().isInt({ min: 1, max: 1000 }).withMessage("limit must be between 1 and 1000"),
     validateRequest,
   ],
   asyncHandler(async (req: Request, res: Response) => {
