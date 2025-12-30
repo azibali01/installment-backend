@@ -2,6 +2,7 @@ import mongoose, { Schema, type Document } from "mongoose"
 import { getNextSequence } from "../utils/counters.js"
 import Payment from "./Payment.js"
 import User from "./User.js"
+import { calculateRemainingBalance } from "../utils/finance.js"
 
 export interface IInstallmentPlan extends Document {
   installmentId?: string

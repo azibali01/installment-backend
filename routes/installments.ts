@@ -65,22 +65,66 @@ router.get(
       query.select("-installmentSchedule")
     }
     
-    const installments = await query
+    const installmentsRaw = await query
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
-      .lean() // Use lean for better performance
+      .lean()
+
+    // Always recalculate 'remaining' from schedule
+    const installments = installmentsRaw.map(plan => {
+      let remaining = 0;
+      if (plan.installmentSchedule && Array.isArray(plan.installmentSchedule)) {
+        remaining = plan.installmentSchedule.reduce((sum, item) => {
+          const amt = Number(item.amount || 0);
+          const paid = Number(item.paidAmount || 0);
+          // Only count if not fully paid
+          if ((item.status === 'pending' || paid < amt)) {
+            return sum + Math.max(0, amt - paid);
+          }
+          return sum;
+        }, 0);
+      }
+      return { ...plan, remaining };
+    });
 
     res.json({ data: installments, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
   }),
 )
 
 router.get("/:id", authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const installment = await InstallmentPlan.findById(req.params.id).populate("customerId").populate("productId")
+  const installment = await InstallmentPlan.findById(req.params.id).populate("customerId").populate("productId");
   if (!installment) {
-    throw new NotFoundError("Installment plan")
+    throw new NotFoundError("Installment plan");
   }
-  res.json(installment)
+  
+  // Recalculate remainingBalance from schedule (fixes old plans with incorrect values)
+  // This ensures database is always in sync
+  if (installment.installmentSchedule && Array.isArray(installment.installmentSchedule)) {
+    const { calculateRemainingBalance } = await import("../utils/finance.js");
+    const recalculated = calculateRemainingBalance(installment.installmentSchedule);
+    if (installment.remainingBalance !== recalculated) {
+      installment.remainingBalance = recalculated;
+      // Save only if changed (to avoid unnecessary writes)
+      await installment.save();
+    }
+  }
+  
+  // Always recalculate 'remaining' from schedule for response
+  let remaining = 0;
+  if (installment.installmentSchedule && Array.isArray(installment.installmentSchedule)) {
+    remaining = installment.installmentSchedule.reduce((sum, item) => {
+      const amt = Number(item.amount || 0);
+      const paid = Number(item.paidAmount || 0);
+      if ((item.status === 'pending' || paid < amt)) {
+        return sum + Math.max(0, amt - paid);
+      }
+      return sum;
+    }, 0);
+  }
+  
+  const installmentObj = installment.toObject();
+  res.json({ ...installmentObj, remaining });
 }))
 
 router.post(
