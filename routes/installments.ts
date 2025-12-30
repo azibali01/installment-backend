@@ -71,8 +71,8 @@ router.get(
 
     // Always recalculate 'remaining' from schedule and fix database if needed
     const { calculateRemainingBalance } = await import("../utils/finance.js");
-    const installments = await Promise.all(
-      installmentsRaw.map(async (plan) => {
+    const installments: any[] = await Promise.all(
+      installmentsRaw.map(async (plan: any) => {
         let remaining = 0;
         if (plan.installmentSchedule && Array.isArray(plan.installmentSchedule)) {
           remaining = calculateRemainingBalance(plan.installmentSchedule);
@@ -114,8 +114,15 @@ router.get(
           }
         }
         // Since we're using .lean(), plan is already a plain object
-        // Explicitly add remaining field
-        return { ...plan, remaining };
+        // Explicitly add remaining field - ensure it's a number
+        // Use explicit type casting to avoid complex union type inference
+        const result: any = { ...plan };
+        result.remaining = Number(remaining);
+        // Debug: Log first plan's response structure
+        if (installmentsRaw.indexOf(plan) === 0) {
+          console.log(`[DEBUG RESPONSE] Plan ${plan.installmentId || plan._id}: response has remaining=${result.remaining}, type=${typeof result.remaining}`);
+        }
+        return result;
       })
     );
 
