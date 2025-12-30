@@ -19,8 +19,14 @@ router.get("/", authenticate, asyncHandler(async (req: Request, res: Response) =
 
   const customerId = String(req.query.customerId || "").trim()
   const status = String(req.query.status || "").trim()
+  const installmentPlanId = String(req.query.installmentPlanId || "").trim()
 
   const filter: Record<string, any> = {}
+
+  // Filter by installment plan ID (for installment detail page)
+  if (installmentPlanId && mongoose.Types.ObjectId.isValid(installmentPlanId)) {
+    filter.installmentPlanId = new mongoose.Types.ObjectId(installmentPlanId)
+  }
 
   // Filter by customer -> payments whose installmentPlan belongs to this customer
   if (customerId) {
