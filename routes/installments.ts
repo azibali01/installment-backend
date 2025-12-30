@@ -107,10 +107,15 @@ router.get(
               console.error(`Failed to fix remainingBalance for plan ${plan._id}:`, err);
             });
           }
+        } else {
+          // Debug: Log if schedule is missing
+          if (installmentsRaw.indexOf(plan) < 3) {
+            console.log(`[DEBUG] Plan ${plan.installmentId || plan._id}: NO SCHEDULE! installmentSchedule=${plan.installmentSchedule}`);
+          }
         }
-        // Convert Mongoose document to plain object and explicitly add remaining
-        const planObj = plan.toObject ? plan.toObject() : { ...plan };
-        return { ...planObj, remaining };
+        // Since we're using .lean(), plan is already a plain object
+        // Explicitly add remaining field
+        return { ...plan, remaining };
       })
     );
 
