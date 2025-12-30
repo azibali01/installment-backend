@@ -55,9 +55,29 @@ async function fixRemainingBalances() {
         const currentBalance = Number(plan.remainingBalance || 0);
         const downPayment = Number(plan.downPayment || 0);
         const totalAmount = Number(plan.totalAmount || 0);
+        
+        // Calculate expected initial balance (for verification)
+        const expectedInitialBalance = totalAmount - downPayment;
+        
+        // Debug: Show schedule summary
+        const scheduleSummary = plan.installmentSchedule.reduce((acc: any, item: any) => {
+          const amt = Number(item.amount || 0);
+          const paid = Number(item.paidAmount || 0);
+          const status = item.status || 'pending';
+          if (status === 'paid' || paid >= amt) {
+            acc.paidCount++;
+            acc.paidTotal += amt;
+          } else {
+            acc.pendingCount++;
+            acc.pendingTotal += Math.max(0, amt - paid);
+          }
+          acc.totalAmount += amt;
+          return acc;
+        }, { paidCount: 0, pendingCount: 0, paidTotal: 0, pendingTotal: 0, totalAmount: 0 });
 
         // Only update if different (avoid unnecessary writes)
-        if (Math.abs(correctBalance - currentBalance) > 0.01) {
+        const difference = Math.abs(correctBalance - currentBalance);
+        if (difference > 0.01) {
           plan.remainingBalance = correctBalance;
           await plan.save();
           
@@ -68,12 +88,22 @@ async function fixRemainingBalances() {
           });
           
           console.log(
-            `✅ Fixed plan ${i + 1}/${plans.length}: ${plan.installmentId || "N/A"} ` +
-            `(${currentBalance.toFixed(2)} → ${correctBalance.toFixed(2)}) ` +
-            `[Total: ${totalAmount.toFixed(2)}, Down: ${downPayment.toFixed(2)}]`
+            `✅ Fixed plan ${i + 1}/${plans.length}: ${plan.installmentId || "N/A"}\n` +
+            `   Old: ${currentBalance.toFixed(2)} → New: ${correctBalance.toFixed(2)} (diff: ${difference.toFixed(2)})\n` +
+            `   Total: ${totalAmount.toFixed(2)}, Down: ${downPayment.toFixed(2)}, Expected Initial: ${expectedInitialBalance.toFixed(2)}\n` +
+            `   Schedule: ${scheduleSummary.paidCount} paid (${scheduleSummary.paidTotal.toFixed(2)}), ${scheduleSummary.pendingCount} pending (${scheduleSummary.pendingTotal.toFixed(2)})\n`
           );
           fixed++;
         } else {
+          // Show details even for unchanged plans (first few for verification)
+          if (i < 3) {
+            console.log(
+              `✓ Plan ${i + 1}/${plans.length}: ${plan.installmentId || "N/A"} - Already correct\n` +
+              `   Balance: ${currentBalance.toFixed(2)} (matches calculated: ${correctBalance.toFixed(2)})\n` +
+              `   Total: ${totalAmount.toFixed(2)}, Down: ${downPayment.toFixed(2)}, Expected Initial: ${expectedInitialBalance.toFixed(2)}\n` +
+              `   Schedule: ${scheduleSummary.paidCount} paid, ${scheduleSummary.pendingCount} pending (${scheduleSummary.pendingTotal.toFixed(2)} remaining)\n`
+            );
+          }
           unchanged++;
           if ((i + 1) % 10 === 0) {
             process.stdout.write(`\rChecked ${i + 1}/${plans.length} plans...`);
