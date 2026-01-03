@@ -69,110 +69,60 @@ router.get(
       .limit(limit)
       .lean()
 
-    // Always recalculate 'remaining' from schedule and fix database if needed
-    const { calculateRemainingBalance } = await import("../utils/finance.js");
-    const installments: any[] = await Promise.all(
-      installmentsRaw.map(async (plan: any) => {
-        let remaining = 0;
-        if (plan.installmentSchedule && Array.isArray(plan.installmentSchedule)) {
-          remaining = calculateRemainingBalance(plan.installmentSchedule);
-          
-          // Debug logging for first few plans
-          if (installmentsRaw.indexOf(plan) < 3) {
-            const scheduleSummary = plan.installmentSchedule.reduce((acc: any, item: any) => {
-              const amt = Number(item.amount || 0);
-              const paid = Number(item.paidAmount || 0);
-              const status = item.status || 'pending';
-              if (status === 'paid' || paid >= amt) {
-                acc.paidCount++;
-                acc.paidTotal += amt;
-              } else {
-                acc.pendingCount++;
-                acc.pendingTotal += Math.max(0, amt - paid);
-              }
-              return acc;
-            }, { paidCount: 0, pendingCount: 0, paidTotal: 0, pendingTotal: 0 });
-            console.log(`[DEBUG] Plan ${plan.installmentId || plan._id}: remaining=${remaining}, schedule: ${scheduleSummary.pendingCount} pending (${scheduleSummary.pendingTotal.toFixed(2)}), ${scheduleSummary.paidCount} paid`);
-          }
-          
-          // Fix database if remainingBalance is incorrect (for old plans)
-          const currentBalance = Number(plan.remainingBalance || 0);
-          if (Math.abs(remaining - currentBalance) > 0.01) {
-            // Update in background (don't wait for it)
-            InstallmentPlan.findByIdAndUpdate(
-              plan._id,
-              { remainingBalance: remaining },
-              { new: false }
-            ).catch((err) => {
-              console.error(`Failed to fix remainingBalance for plan ${plan._id}:`, err);
-            });
-          }
-        } else {
-          // Debug: Log if schedule is missing
-          if (installmentsRaw.indexOf(plan) < 3) {
-            console.log(`[DEBUG] Plan ${plan.installmentId || plan._id}: NO SCHEDULE! installmentSchedule=${plan.installmentSchedule}`);
-          }
-        }
-        // Since we're using .lean(), plan is already a plain object
-        // Explicitly add remaining field - ensure it's a number
-        // Use explicit type casting to avoid complex union type inference
-        const result: any = { ...plan };
-        result.remaining = Number(remaining);
-        // Debug: Log first plan's response structure
-        if (installmentsRaw.indexOf(plan) === 0) {
-          console.log(`[DEBUG RESPONSE] Plan ${plan.installmentId || plan._id}: response has remaining=${result.remaining}, type=${typeof result.remaining}`);
-        }
-        return result;
-      })
-    );
-
-    // Debug: Log response structure for first plan
-    if (installments.length > 0) {
-      console.log('[BACKEND RESPONSE] First plan in response:', {
-        id: installments[0]._id,
-        remaining: installments[0].remaining,
-        hasRemaining: 'remaining' in installments[0],
-        keys: Object.keys(installments[0]).filter(k => k.includes('remain'))
-      });
+    // Always recalculate 'remaining' from actual Payment records (not schedule)
+    const Payment = (await import("../models/Payment.js")).default;
+    const planIds = installmentsRaw.map(p => p._id);
+    
+    // Fetch all payments for these plans (excluding reversed)
+    const payments = await Payment.find({
+      installmentPlanId: { $in: planIds },
+      status: { $ne: "reversed" }
+    }).select("installmentPlanId amount").lean();
+    
+    // Group payments by plan
+    const paymentsByPlan: Record<string, number> = {};
+    for (const payment of payments) {
+      const planId = String(payment.installmentPlanId);
+      paymentsByPlan[planId] = (paymentsByPlan[planId] || 0) + Number(payment.amount || 0);
     }
+    
+    const installments = installmentsRaw.map(plan => {
+      const planId = String(plan._id);
+      const totalAmount = Number(plan.totalAmount || 0);
+      const downPayment = Number(plan.downPayment || 0);
+      const actualPayments = paymentsByPlan[planId] || 0;
+      
+      // Remaining = Total - (Down Payment + All Actual Payments)
+      const remaining = Math.max(0, totalAmount - (downPayment + actualPayments));
+      
+      return { ...plan, remaining };
+    });
     
     res.json({ data: installments, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } })
   }),
 )
 
 router.get("/:id", authenticate, asyncHandler(async (req: Request, res: Response) => {
-  const installment = await InstallmentPlan.findById(req.params.id).populate("customerId").populate("productId");
+  const installment = await InstallmentPlan.findById(req.params.id).populate("customerId").populate("productId").lean();
   if (!installment) {
     throw new NotFoundError("Installment plan");
   }
   
-  // Recalculate remainingBalance from schedule (fixes old plans with incorrect values)
-  // This ensures database is always in sync
-  if (installment.installmentSchedule && Array.isArray(installment.installmentSchedule)) {
-    const { calculateRemainingBalance } = await import("../utils/finance.js");
-    const recalculated = calculateRemainingBalance(installment.installmentSchedule);
-    if (installment.remainingBalance !== recalculated) {
-      installment.remainingBalance = recalculated;
-      // Save only if changed (to avoid unnecessary writes)
-      await installment.save();
-    }
-  }
+  // Always recalculate 'remaining' from actual Payment records (not schedule)
+  const Payment = (await import("../models/Payment.js")).default;
+  const payments = await Payment.find({
+    installmentPlanId: installment._id,
+    status: { $ne: "reversed" }
+  }).select("amount").lean();
   
-  // Always recalculate 'remaining' from schedule for response
-  let remaining = 0;
-  if (installment.installmentSchedule && Array.isArray(installment.installmentSchedule)) {
-    remaining = installment.installmentSchedule.reduce((sum, item) => {
-      const amt = Number(item.amount || 0);
-      const paid = Number(item.paidAmount || 0);
-      if ((item.status === 'pending' || paid < amt)) {
-        return sum + Math.max(0, amt - paid);
-      }
-      return sum;
-    }, 0);
-  }
+  const totalAmount = Number(installment.totalAmount || 0);
+  const downPayment = Number(installment.downPayment || 0);
+  const actualPayments = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   
-  const installmentObj = installment.toObject();
-  res.json({ ...installmentObj, remaining });
+  // Remaining = Total - (Down Payment + All Actual Payments)
+  const remaining = Math.max(0, totalAmount - (downPayment + actualPayments));
+  
+  res.json({ ...installment, remaining });
 }))
 
 router.post(
