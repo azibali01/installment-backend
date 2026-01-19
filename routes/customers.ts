@@ -10,9 +10,19 @@ const router = express.Router()
 
 router.get("/", authenticate, asyncHandler(async (req: Request, res: Response) => {
   const page = Math.max(1, Number(req.query.page || 1))
-  const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)))
-  const skip = (page - 1) * limit
   const total = await Customer.countDocuments()
+
+  // Allow callers to request all customers with ?all=true (useful for dropdowns).
+  // Otherwise cap the limit to 1000 to avoid accidental huge responses.
+  let limit: number
+  let skip: number
+  if (String(req.query.all) === "true") {
+    limit = total > 0 ? total : 1
+    skip = 0
+  } else {
+    limit = Math.max(1, Math.min(1000, Number(req.query.limit || 20)))
+    skip = (page - 1) * limit
+  }
   // Only select necessary fields for list view
   const customers = await Customer.find()
     .sort({ customerId: 1 })
