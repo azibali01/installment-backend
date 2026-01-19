@@ -32,7 +32,6 @@ const __dirname = path.dirname(__filename)
 // Load environment variables from env file
 dotenv.config({ path: path.resolve(__dirname, "./.env") })
 
-
 getJwtSecret()
 
 const app = express()
@@ -76,8 +75,6 @@ if (NODE_ENV !== "production") {
 const useTrustProxy = NODE_ENV === "production" || process.env.TRUST_PROXY === "true"
 app.set("trust proxy", useTrustProxy)
 console.log(`${new Date().toISOString()} - trust proxy set to ${useTrustProxy}`)
-
-
 
 // Ensure CORS headers are added as early as possible so any middleware
 // (including rate limiters) that short-circuits can still return responses
@@ -179,14 +176,12 @@ app.get("/health", async (_req, res) => {
   res.json({ status: "ok", uptime: process.uptime(), env: process.env.NODE_ENV || "development" })
 })
 
-
 connectDB()
   .then(() => console.log("MongoDB connected"))
   .catch((err) => {
     console.error("MongoDB connection error:", err)
     process.exit(1)
   })
-
 
   ; (async () => {
     try {
@@ -210,8 +205,6 @@ connectDB()
       console.error("Failed to ensure admin role permissions:", err)
     }
   })()
-
-
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -239,10 +232,9 @@ app.use("/api/roles", roleRoutes)
 app.use("/api/contacts", contactRoutes)
 app.use("/api/cash", cashRoutes)
 
-
 import errorHandler from "./middleware/errorHandler.js"
-app.use(errorHandler)
 
+app.use(errorHandler)
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
